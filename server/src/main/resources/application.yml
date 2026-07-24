@@ -1,0 +1,48 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  application:
+    name: aluco-server
+  datasource:
+    url: ${ALUCO_DB_URL:jdbc:mysql://localhost:3306/aluco?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true}
+    username: ${ALUCO_DB_USER:root}
+    password: ${ALUCO_DB_PASSWORD:root}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: none
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  metrics:
+    distribution:
+      percentiles-histogram:
+        aluco.e2e.latency: true
+
+aluco:
+  mqtt:
+    enabled: ${ALUCO_MQTT_ENABLED:true}
+    broker: ${ALUCO_MQTT_BROKER:tcp://localhost:1883}
+    client-id: ${ALUCO_MQTT_CLIENT_ID:aluco-server}
+    telemetry-topic: aluco/+/+/telemetry
+    reconnect-interval-ms: ${ALUCO_MQTT_RECONNECT_MS:5000}
+  sink:
+    capacity: ${ALUCO_SINK_CAPACITY:50000}
+  batch:
+    max-size: ${ALUCO_BATCH_MAX_SIZE:1000}
+    flush-interval-ms: ${ALUCO_BATCH_FLUSH_MS:500}
+  jwt:
+    # DEV ONLY default ? override ALUCO_JWT_SECRET in any real deployment.
+    secret: ${ALUCO_JWT_SECRET:aluco-dev-secret-change-me-in-production-0123456789abcdef}
+    ttl-hours: ${ALUCO_JWT_TTL_HOURS:24}
+  offline:
+    enabled: ${ALUCO_OFFLINE_CHECK_ENABLED:true}
+    threshold-seconds: ${ALUCO_OFFLINE_THRESHOLD_SECONDS:60}
+    check-interval-ms: ${ALUCO_OFFLINE_CHECK_MS:15000}
