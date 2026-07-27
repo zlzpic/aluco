@@ -40,7 +40,7 @@ public class SimDevice implements MqttCallback {
     private final Random random = new Random();
     private final double phase;
 
-    private volatile int intervalSec;
+    private volatile long intervalMs;
     private volatile boolean running = true;
     private volatile MqttClient client;
 
@@ -50,14 +50,14 @@ public class SimDevice implements MqttCallback {
     private double spikeOffset = 0;
 
     public SimDevice(String broker, String siteId, String deviceKey, int deviceIndex,
-                     int intervalSec, String[] metrics, double spikeProbability,
+                     long intervalMs, String[] metrics, double spikeProbability,
                      AtomicLong sentTotal, AtomicLong failureTotal,
                      ScheduledExecutorService scheduler) {
         this.broker = broker;
         this.siteId = siteId;
         this.deviceKey = deviceKey;
         this.deviceIndex = deviceIndex;
-        this.intervalSec = intervalSec;
+        this.intervalMs = intervalMs;
         this.metrics = metrics;
         this.spikeProbability = spikeProbability;
         this.sentTotal = sentTotal;
@@ -131,7 +131,7 @@ public class SimDevice implements MqttCallback {
         } catch (Exception e) {
             failureTotal.incrementAndGet();
         }
-        scheduleNext(intervalSec * 1000L);
+        scheduleNext(intervalMs);
     }
 
     private double temp(long now) {
@@ -170,7 +170,7 @@ public class SimDevice implements MqttCallback {
                     + cmd.intervalSec());
             return; // out-of-range commands are ignored (spec 5.3)
         }
-        intervalSec = cmd.intervalSec();
+        intervalMs = cmd.intervalSec() * 1000L;
         System.out.println("[" + deviceKey + "] SET_INTERVAL applied: "
                 + cmd.intervalSec() + "s (cmdId=" + cmd.cmdId() + ")");
     }

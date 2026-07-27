@@ -78,7 +78,7 @@ public class AlucoSim implements Runnable {
 
     @Override
     public void run() {
-        int intervalSec = (int) Math.max(1, parseDurationMs(interval) / 1000);
+        long intervalMs = Math.max(100, parseDurationMs(interval)); // floor 100ms
         long rampMs = parseDurationMs(ramp);
         String[] metricNames = metrics.split(",");
 
@@ -101,7 +101,7 @@ public class AlucoSim implements Runnable {
         // ramp-up: stagger device starts evenly over the ramp window (spec 9.1)
         for (int i = 1; i <= devices; i++) {
             String key = devicePrefix + String.format("%04d", i);
-            SimDevice device = new SimDevice(broker, site, key, i, intervalSec, metricNames,
+            SimDevice device = new SimDevice(broker, site, key, i, intervalMs, metricNames,
                     spikeProbability, sentTotal, failureTotal, scheduler);
             fleet.add(device);
             long delay = devices <= 1 ? 0 : rampMs * (i - 1) / (devices - 1);
@@ -125,8 +125,18 @@ public class AlucoSim implements Runnable {
         }));
 
         System.out.println("aluco-sim running: " + devices + " devices -> " + broker
-                + " (site=" + site + ", interval=" + intervalSec + "s, metrics=" + metrics + ")");
+                + " (site=" + site + ", interval=" + intervalMs + "ms, metrics=" + metrics + ")");
+
+        try {
+            new java.util.concurrent.CountDownLatch(1).await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
+
+    // keep the main thread alive; worker/stats threads are daemons,
+    // without this the JVM exits immediately after startup
+
 
     /** Parses durations like "500ms", "1s", "2m" into milliseconds. */
     static long parseDurationMs(String text) {
