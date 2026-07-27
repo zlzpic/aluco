@@ -1,0 +1,73 @@
+{
+  "title": "Aluco Overview",
+  "uid": "aluco-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": { "from": "now-30m", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Ingest rate (msg/s)",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "targets": [{ "expr": "sum(rate(aluco_ingest_received_total{result=\"ok\"}[1m]))", "refId": "A" }],
+      "datasource": { "type": "prometheus", "uid": "Prometheus" }
+    },
+    {
+      "id": 2, "type": "stat", "title": "Dropped (invalid + sink overflow)",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "targets": [
+        { "expr": "sum(rate(aluco_ingest_received_total{result=\"dropped\"}[1m]))", "refId": "A", "legendFormat": "invalid/s" },
+        { "expr": "sum(rate(aluco_sink_dropped_total[1m]))", "refId": "B", "legendFormat": "sink/s" }
+      ],
+      "datasource": { "type": "prometheus", "uid": "Prometheus" }
+    },
+    {
+      "id": 3, "type": "stat", "title": "WS sessions",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+      "targets": [{ "expr": "aluco_ws_sessions", "refId": "A" }],
+      "datasource": { "type": "prometheus", "uid": "Prometheus" }
+    },
+    {
+      "id": 4, "type": "stat", "title": "FIRING alerts",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
+      "targets": [{ "expr": "aluco_alerts_firing", "refId": "A" }],
+      "datasource": { "type": "prometheus", "uid": "Prometheus" }
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "E2E latency (envelope ts -> processed)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum(rate(aluco_e2e_latency_seconds_bucket[1m])) by (le))", "refId": "A", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, sum(rate(aluco_e2e_latency_seconds_bucket[1m])) by (le))", "refId": "B", "legendFormat": "p95" },
+        { "expr": "histogram_quantile(0.99, sum(rate(aluco_e2e_latency_seconds_bucket[1m])) by (le))", "refId": "C", "legendFormat": "p99" }
+      ],
+      "datasource": { "type": "prometheus", "uid": "Prometheus" }
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Persist batch size",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "targets": [
+        { "expr": "rate(aluco_persist_batch_size_sum[1m]) / rate(aluco_persist_batch_size_count[1m])", "refId": "A", "legendFormat": "avg batch" }
+      ],
+      "datasource": { "type": "prometheus", "uid": "Prometheus" }
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Rule eval latency (avg, us)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "targets": [
+        { "expr": "1e6 * rate(aluco_rule_eval_seconds_sum[1m]) / rate(aluco_rule_eval_seconds_count[1m])", "refId": "A", "legendFormat": "avg us" }
+      ],
+      "datasource": { "type": "prometheus", "uid": "Prometheus" }
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "JVM memory used",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum by (area) (jvm_memory_used_bytes)", "refId": "A", "legendFormat": "{{area}}" }
+      ],
+      "datasource": { "type": "prometheus", "uid": "Prometheus" }
+    }
+  ]
+}
