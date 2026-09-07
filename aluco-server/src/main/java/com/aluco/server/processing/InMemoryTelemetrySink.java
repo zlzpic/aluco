@@ -19,7 +19,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.ConcurrentHashMap;
 
 
 /**
@@ -32,7 +31,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * Also records end-to-end latency (now - envelope.ts) and presence(true)
  * transitions for devices coming back online.
  */
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+
 @Component
+@ConditionalOnProperty(name = "aluco.sink.type", havingValue = "memory", matchIfMissing = true)
 public class InMemoryTelemetrySink implements TelemetrySink {
 
     private static final Logger log = LoggerFactory.getLogger(InMemoryTelemetrySink.class);
@@ -44,11 +46,9 @@ public class InMemoryTelemetrySink implements TelemetrySink {
     private final AlertingEngine alertingEngine;
     private final Counter sinkDropped;
     private final Timer e2eLatency;
+    private final PresenceTracker presenceTracker;
     private final int batchMaxSize;
     private final long flushIntervalMs;
-
-    /** last known presence per device, for online transition detection */
-    private final Map<String, Boolean> presence = new ConcurrentHashMap<>();
 
     private volatile boolean running = true;
     private final Thread consumer;
@@ -60,7 +60,8 @@ public class InMemoryTelemetrySink implements TelemetrySink {
                                  StateStore stateStore,
                                  LivePush livePush,
                                  AlertingEngine alertingEngine,
-                                 MeterRegistry registry) {
+                                 MeterRegistry registry,
+                                 PresenceTracker presenceTracker) {
         this.queue = new ArrayBlockingQueue<>(capacity);
         this.batchMaxSize = batchMaxSize;
         this.flushIntervalMs = flushIntervalMs;
@@ -70,6 +71,7 @@ public class InMemoryTelemetrySink implements TelemetrySink {
         this.alertingEngine = alertingEngine;
         this.sinkDropped = registry.counter("aluco.sink.dropped");
         this.e2eLatency = registry.timer("aluco.e2e.latency");
+        this.presenceTracker = presenceTracker;
         this.consumer = new Thread(this::consumeLoop, "aluco-sink-consumer");
         this.consumer.setDaemon(true);
         this.consumer.start();
@@ -126,10 +128,7 @@ public class InMemoryTelemetrySink implements TelemetrySink {
         livePush.pushTelemetry(deviceKey, msg.ts(), msg.metrics());
 
         // presence: report coming back online
-        Boolean prev = presence.put(deviceKey, Boolean.TRUE);
-        if (prev == null || !prev) {
-            livePush.pushPresence(deviceKey, true);
-        }
+        presenceTracker.recordReport(deviceKey);
 
         // alert path
         alertingEngine.onTelemetry(msg);
@@ -149,7 +148,7 @@ public class InMemoryTelemetrySink implements TelemetrySink {
 
     /** Called by OfflineDetectionTask so a later report triggers presence(true). */
     public void markOffline(String deviceKey) {
-        presence.put(deviceKey, Boolean.FALSE);
+        presenceTracker.markOffline(deviceKey);
     }
 
     @PreDestroy

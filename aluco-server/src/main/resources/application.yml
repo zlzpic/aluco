@@ -5,9 +5,9 @@ spring:
   application:
     name: aluco-server
   datasource:
-    url: ${ALUCO_DB_URL:jdbc:mysql://localhost:3306/aluco?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true}
-    username: ${ALUCO_DB_USER:root}
-    password: ${ALUCO_DB_PASSWORD:root}
+    url: "jdbc:mysql://localhost:3306/aluco?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true"
+    username: "root"
+    password: "123456"
   jpa:
     open-in-view: false
     hibernate:
@@ -28,21 +28,35 @@ management:
 
 aluco:
   mqtt:
-    enabled: ${ALUCO_MQTT_ENABLED:true}
-    broker: ${ALUCO_MQTT_BROKER:tcp://localhost:1883}
-    client-id: ${ALUCO_MQTT_CLIENT_ID:aluco-server}
+    enabled: true
+    broker: tcp://localhost:1883
+    client-id: aluco-server
     telemetry-topic: aluco/+/+/telemetry
-    reconnect-interval-ms: ${ALUCO_MQTT_RECONNECT_MS:5000}
+    reconnect-interval-ms: 5000
   sink:
-    capacity: ${ALUCO_SINK_CAPACITY:50000}
+    capacity: 200000
+    type: memory
   batch:
-    max-size: ${ALUCO_BATCH_MAX_SIZE:1000}
-    flush-interval-ms: ${ALUCO_BATCH_FLUSH_MS:500}
+    max-size: 1000
+    flush-interval-ms: 500
+  kafka:
+    bootstrap-servers: localhost:9092
+  store:
+    state: mysql
+    timeseries: mysql
   jwt:
-    # DEV ONLY default ? override ALUCO_JWT_SECRET in any real deployment.
-    secret: ${ALUCO_JWT_SECRET:aluco-dev-secret-change-me-in-production-0123456789abcdef}
-    ttl-hours: ${ALUCO_JWT_TTL_HOURS:24}
+    secret: aluco-dev-secret-change-me-in-production-0123456789abcdef
+    ttl-hours: 24
   offline:
-    enabled: ${ALUCO_OFFLINE_CHECK_ENABLED:true}
-    threshold-seconds: ${ALUCO_OFFLINE_THRESHOLD_SECONDS:60}
-    check-interval-ms: ${ALUCO_OFFLINE_CHECK_MS:15000}
+    enabled: true
+    threshold-seconds: 60
+    check-interval-ms: 15000
+  command:
+    enabled: true
+    timeout-seconds: 30
+    check-interval-ms: 10000
+  emqx:
+    api:
+      base: http://localhost:18083
+      user: admin
+      password: public

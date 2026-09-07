@@ -12,9 +12,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
-import java.util.Map;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 
 @Service
 public class AlertEventServiceImpl implements AlertEventService {
@@ -99,15 +96,17 @@ public class AlertEventServiceImpl implements AlertEventService {
         return Page.of(p.getContent(), p.getTotalElements(), page, size);
     }
 
-    /** Fill transient ruleName/deviceKey for API rendering. */
+    /** Fill snapshot ruleName/deviceKey for API rendering (v2 spec 4.2 #3, 4.4.1). */
     private void enrich(List<AlertEvent> events) {
         if (events.isEmpty()) {
             return;
         }
-        Map<Long, String> deviceKeys = deviceRepository.findAllById(
-                        events.stream().map(AlertEvent::getDeviceId).distinct().toList())
-                .stream().collect(Collectors.toMap(Device::getId, Device::getDeviceKey));
-        events.forEach(e -> e.setDeviceKey(deviceKeys.getOrDefault(e.getDeviceId(), "?")));
+        // Use snapshot columns instead of joining device table (v2 spec 4.4.1)
+        events.forEach(e -> {
+            if (e.getDeviceKey() == null || e.getDeviceKey().isBlank()) {
+                e.setDeviceKey("deleted");
+            }
+        });
     }
 
     /** Restart recovery source (spec 7.3.6): all currently FIRING events. */
@@ -115,8 +114,27 @@ public class AlertEventServiceImpl implements AlertEventService {
         return eventRepository.findByStatus(AlertEvent.Status.FIRING);
     }
 
+    @Override
     public AlertEvent getById(long id) {
         return eventRepository.findById(id).orElse(null);
+    }
+
+    /** Find FIRING event for (ruleId, deviceKey) pair - used by RESOLVED push (spec 4.2 #2). */
+    @Transactional
+    public AlertEvent findFiringEvent(Long ruleId, String deviceKey) {
+        // Find by ruleId, filter by deviceKey (device_id lookup)
+        List<AlertEvent> events = eventRepository.findByRuleIdAndStatus(
+                ruleId, AlertEvent.Status.FIRING);
+        for (AlertEvent e : events) {
+            String dk = deviceRepository.findById(e.getDeviceId())
+                    .map(Device::getDeviceKey).orElse(null);
+            if (deviceKey.equals(dk)) {
+                e.setRuleName(null);  // Will be filled by caller
+                e.setDeviceKey(deviceKey);
+                return e;
+            }
+        }
+        return null;
     }
 
    /* public Function<Long, String> unusedGuard() {

@@ -105,6 +105,15 @@ public class WebSocketLivePush implements LivePush {
         broadcast(Map.of("type", "presence", "deviceId", deviceKey, "online", online));
     }
 
+    @Override
+    public void pushCommandEvent(String cmdId, String deviceKey, String status) {
+        Map<String, Object> ev = new HashMap<>();
+        ev.put("cmdId", cmdId);
+        ev.put("deviceId", deviceKey);
+        ev.put("status", status);
+        broadcast(Map.of("type", "command", "event", ev));
+    }
+
     /** Server-side ping every 30s (spec 5.4). */
     @Scheduled(fixedRate = 30_000)
     public void ping() {

@@ -1,10 +1,4 @@
-# Aluco v1 one-command demo stack (spec chapter 10).
-#   core:  docker compose -f deploy/docker-compose.yml up -d
-#   demo:  docker compose -f deploy/docker-compose.yml --profile demo up -d
-#
-# Broker: EMQX 5.8.6 is the spec-pinned default (ADR-0001). To run the whole
-# stack on HiveMQ CE instead, comment out the emqx service and uncomment the
-# hivemq block below — the server/sim only need a tcp://broker:1883 endpoint.
+version: '3.8'
 
 services:
 
@@ -22,37 +16,25 @@ services:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]
       interval: 5s
       timeout: 3s
-      retries: 20
+ retries: 20
 
   emqx:
     image: emqx/emqx:5.8.6
     container_name: aluco-emqx
     environment:
-      EMQX_ALLOW_ANONYMOUS: "true"   # v1 simplification, see ADR-0003
+      # v2 spec 5.2.2: EMQX built-in auth, disable anonymous
+      EMQX_ALLOW_ANONYMOUS: "false"
+      # EMQX API credentials (v2 spec 5.2.3: server bootstraps EMQX via REST API)
+      EMQX_DASHBOARD__DEFAULT_USERNAME: admin
+      EMQX_DASHBOARD__DEFAULT_PASSWORD: ${EMQX_DASHBOARD_PASSWORD:-public}
     ports:
       - "1883:1883"                  # MQTT
-      - "18083:18083"                # Dashboard (admin/public — demo only)
+      - "18083:18083"                # Dashboard (admin / public)
     healthcheck:
       test: ["CMD", "emqx", "ctl", "status"]
       interval: 5s
       timeout: 5s
       retries: 20
-
-  # ---- HiveMQ CE alternative (uncomment to swap the broker) ----
-  # hivemq:
-  #   image: hivemq/hivemq-ce:2024.8
-  #   container_name: aluco-hivemq
-  #   ports:
-  #     - "1883:1883"
-  #     - "8081:8080"                # Control Center (kept off server's 8080)
-  #   healthcheck:
-  #     test: ["CMD-SHELL", "curl -sf http://localhost:8080/ || exit 1"]
-  #     interval: 5s
-  #     timeout: 3s
-  #     retries: 20
-  # NOTE: HiveMQ CE allows anonymous connections out of the box.
-  # If you swap, point ALUCO_MQTT_BROKER below to tcp://hivemq:1883 and
-  # replace "emqx" in server.depends_on accordingly.
 
   server:
     build:
@@ -63,6 +45,11 @@ services:
       ALUCO_DB_USER: root
       ALUCO_DB_PASSWORD: root
       ALUCO_MQTT_BROKER: tcp://emqx:1883
+      # v2 spec 5.2.2: enable MQTT auth (use device.token as password)
+      ALUCO_MQTT_AUTH: ${ALUCO_MQTT_AUTH:-on}
+      # EMQX API credentials for device credential sync (v2 spec 5.2.3)
+      ALUCO_EMQX_API_USER: admin
+      ALUCO_EMQX_API_PASSWORD: ${EMQX_DASHBOARD_PASSWORD:-public}
       # DEMO ONLY — override in any real deployment (README warning).
       ALUCO_JWT_SECRET: aluco-compose-demo-secret-change-me-0123456789abcdef
     ports:
@@ -72,6 +59,9 @@ services:
         condition: service_healthy
       emqx:
         condition: service_healthy
+    profiles:
+      - core
+      - demo
 
   prometheus:
     image: prom/prometheus:v2.55.1
@@ -82,13 +72,16 @@ services:
       - "9090:9090"
     depends_on:
       - server
+    profiles:
+      - core
+      - demo
 
   grafana:
     image: grafana/grafana:11.3.1
     container_name: aluco-grafana
     environment:
       GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin   # demo only — README warning
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}   # demo only — README warning
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
@@ -96,6 +89,9 @@ services:
       - "3000:3000"
     depends_on:
       - prometheus
+    profiles:
+      - core
+      - demo
 
   sim:
     build:
@@ -109,6 +105,27 @@ services:
       --interval 1s
       --ramp 30s
       --spike-probability 0.002
+      --auth
+      --api http://server:8080/api/v1
+      --username admin
+      --password admin123
+    depends_on:
+      - server
+
+  # ---- sim-insecure (v1 anonymous mode, for v1-only demo) ----
+  sim-insecure:
+    build:
+      context: ../simulator
+    container_name: aluco-sim-insecure
+    profiles: ["demo"]
+    command: >
+      --broker tcp://emqx:1883
+      --site site-01
+      --devices 50
+      --interval 1s
+      --ramp 10s
+      --spike-probability 0.005
+      --auth=false
       --api http://server:8080/api/v1
       --username admin
       --password admin123

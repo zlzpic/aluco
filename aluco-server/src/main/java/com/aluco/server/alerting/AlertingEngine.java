@@ -84,14 +84,16 @@ public class AlertingEngine {
                         livePush.pushAlert(event);
                     }
                     case RESOLVED -> {
+                        // spec 4.2 #2: RESOLVED frame must carry a persisted event (real id, resolvedAt)
                         eventService.resolve(rule, msg.deviceKey(), msg.ts());
-                        // resolve() updates the row; push a lightweight resolution event
-                        AlertEvent resolved = new AlertEvent(rule.getId(), 0L, value,
-                                java.time.Instant.ofEpochMilli(msg.ts()));
-                        resolved.setRuleName(rule.getName());
-                        resolved.setDeviceKey(msg.deviceKey());
-                        resolved.resolve(java.time.Instant.ofEpochMilli(msg.ts()));
-                        livePush.pushAlert(resolved);
+                        // Resolve logic persists; pushAlert reads the already-persisted event from DB
+                        AlertEvent resolved = eventService.findFiringEvent(rule.getId(), msg.deviceKey());
+                        if (resolved != null) {
+                            livePush.pushAlert(resolved);
+                        } else {
+                            log.warn("RESOLVED frame could not fetch event for rule {} / device {}",
+                                    rule.getId(), msg.deviceKey());
+                        }
                     }
                     case NONE -> { /* dedup or quiet: nothing to do */ }
                 }

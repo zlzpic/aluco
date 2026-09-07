@@ -69,21 +69,24 @@ public class MySqlTimeSeriesStore implements TimeSeriesStore {
     }
 
     @Override
-    public List<TelemetryPoint> query(String deviceKey, String metric, long from, long to,
-                                      String interval) {
+    public QueryResult query(String deviceKey, String metric, long from, long to, String interval) {
         long deviceId = deviceId(deviceKey);
         if (isRaw(interval)) {
-            return jdbc.query(
+            List<TelemetryPoint> pts = jdbc.query(
                     "SELECT ts, val FROM telemetry "
                             + "WHERE device_id = ? AND metric = ? AND ts >= ? AND ts <= ? "
-                            + "ORDER BY ts LIMIT " + RAW_LIMIT,
+                            + "ORDER BY ts LIMIT " + (RAW_LIMIT + 1),
                     (rs, i) -> new TelemetryPoint(deviceKey, metric,
                             rs.getTimestamp(1).getTime(), rs.getDouble(2)),
                     deviceId, metric, new Timestamp(from), new Timestamp(to));
+            boolean truncated = pts.size() > RAW_LIMIT;
+            if (truncated) {
+                pts = new ArrayList<>(pts.subList(0, RAW_LIMIT));
+            }
+            return new QueryResult(pts, truncated);
         }
         long bucket = bucketSeconds(interval);
-        // bucket start (epoch ms) as point ts, AVG(val) as point value (spec 5.5)
-        return jdbc.query(
+        List<TelemetryPoint> bucketed = jdbc.query(
                 "SELECT FLOOR(UNIX_TIMESTAMP(ts) / " + bucket + ") * " + bucket + " AS b, "
                         + "AVG(val) FROM telemetry "
                         + "WHERE device_id = ? AND metric = ? AND ts >= ? AND ts <= ? "
@@ -91,6 +94,7 @@ public class MySqlTimeSeriesStore implements TimeSeriesStore {
                 (rs, i) -> new TelemetryPoint(deviceKey, metric,
                         rs.getLong(1) * 1000L, rs.getDouble(2)),
                 deviceId, metric, new Timestamp(from), new Timestamp(to));
+        return new QueryResult(bucketed, false);
     }
 
     private long deviceId(String deviceKey) {
@@ -98,11 +102,16 @@ public class MySqlTimeSeriesStore implements TimeSeriesStore {
         if (cached != null) {
             return cached;
         }
+        // Check device table first (v2 spec 4.4.1: device ∪ tombstone)
         List<Long> ids = jdbc.query("SELECT id FROM device WHERE device_key = ?",
                 (rs, i) -> rs.getLong(1), deviceKey);
         if (ids.isEmpty()) {
-            // device deleted -> drop its points silently; cache a tombstone miss
-            throw new IllegalStateException("unknown deviceKey: " + deviceKey);
+            // Check tombstone table for deleted devices (orphan semantics)
+            ids = jdbc.query("SELECT device_id FROM device_tombstone WHERE device_key = ?",
+                    (rs, i) -> rs.getLong(1), deviceKey);
+            if (ids.isEmpty()) {
+                throw new IllegalStateException("unknown deviceKey: " + deviceKey);
+            }
         }
         deviceIds.put(deviceKey, ids.get(0));
         return ids.get(0);
@@ -116,25 +125,5 @@ public class MySqlTimeSeriesStore implements TimeSeriesStore {
     /** For tests/ops: current known device ids. */
     public Set<String> cachedDevices() {
         return Set.copyOf(deviceIds.keySet());
-    }
-
-    // convenience used by smoke path / controllers needing truncation info
-    public List<TelemetryPoint> queryRawWithTruncationFlag(String deviceKey, String metric,
-                                                           long from, long to,
-                                                           List<Boolean> truncatedOut) {
-        long deviceId = deviceId(deviceKey);
-        List<TelemetryPoint> pts = jdbc.query(
-                "SELECT ts, val FROM telemetry "
-                        + "WHERE device_id = ? AND metric = ? AND ts >= ? AND ts <= ? "
-                        + "ORDER BY ts LIMIT " + (RAW_LIMIT + 1),
-                (rs, i) -> new TelemetryPoint(deviceKey, metric,
-                        rs.getTimestamp(1).getTime(), rs.getDouble(2)),
-                deviceId, metric, new Timestamp(from), new Timestamp(to));
-        if (pts.size() > RAW_LIMIT) {
-            truncatedOut.add(Boolean.TRUE);
-            return new ArrayList<>(pts.subList(0, RAW_LIMIT));
-        }
-        truncatedOut.add(Boolean.FALSE);
-        return pts;
     }
 }

@@ -1,0 +1,16 @@
+﻿timestamp,sink_dropped,e2e_p50_ms,e2e_p99_ms,telemetry_rows,online_devices
+2026-08-11 10:01:19,# HELP aluco_sink_dropped_total,N/A,N/A,1678,0
+2026-08-11 10:02:19,# HELP aluco_sink_dropped_total,N/A,N/A,6778,0
+2026-08-11 10:03:19,# HELP aluco_sink_dropped_total,N/A,N/A,12448,0
+2026-08-11 10:04:20,# HELP aluco_sink_dropped_total,N/A,N/A,18180,0
+2026-08-11 10:05:20,# HELP aluco_sink_dropped_total,N/A,N/A,24190,0
+2026-08-11 10:06:20,# HELP aluco_sink_dropped_total,N/A,N/A,30274,0
+2026-08-11 10:07:20,# HELP aluco_sink_dropped_total,N/A,N/A,36169,0
+2026-08-11 10:08:20,# HELP aluco_sink_dropped_total,N/A,N/A,42266,0
+2026-08-11 10:09:20,# HELP aluco_sink_dropped_total,N/A,N/A,48190,0
+2026-08-11 10:10:20,# HELP aluco_sink_dropped_total,N/A,N/A,54230,0
+2026-08-11 10:11:20,# HELP aluco_sink_dropped_total,N/A,N/A,60384,0
+2026-08-11 10:12:20,# HELP aluco_sink_dropped_total,N/A,N/A,66293,0
+2026-08-11 10:13:20,# HELP aluco_sink_dropped_total,N/A,N/A,72390,0
+2026-08-11 10:14:21,# HELP aluco_sink_dropped_total,N/A,N/A,78352,0
+2026-08-11 10:15:21,# HELP aluco_sink_dropped_total,N/A,N/A,84366,0

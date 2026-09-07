@@ -1,5 +1,6 @@
 package com.aluco.server.api;
 
+import com.aluco.server.common.AuthService;
 import com.aluco.server.common.JwtService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
