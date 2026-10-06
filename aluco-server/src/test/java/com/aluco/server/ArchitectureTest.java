@@ -14,10 +14,16 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 @AnalyzeClasses(packages = "com.aluco.server", importOptions = ImportOption.DoNotIncludeTests.class)
 class ArchitectureTest {
 
-    /** api may depend on everything; nothing may depend on api. */
+        /**
+     * api may depend on everything; nothing may depend on api.
+     * Excluded: TimescaleConfig — Flyway.configure() lives in
+     * org.flywaydb.core.api.configuration, so the config class necessarily
+     * touches the Flyway API to build the second migration engine.
+     */
     @ArchTest
     static final ArchRule nothingDependsOnApi = noClasses()
             .that().resideOutsideOfPackage("..api..")
+            .and().doNotHaveSimpleName("TimescaleConfig")
             .should().dependOnClassesThat().resideInAPackage("..api..");
 
     /** ingestion and push must not depend on each other. */
@@ -31,14 +37,20 @@ class ArchitectureTest {
             .that().resideInAPackage("..push..")
             .should().dependOnClassesThat().resideInAPackage("..ingestion..");
 
-    /** SQL/JdbcTemplate only inside store implementations (MySql* classes). */
+    /**
+     * SQL/JdbcTemplate only inside store implementations (MySql* classes) or the
+     * seam config that constructs the JDBC infrastructure itself
+     * (TimescaleConfig builds the second DataSource + its JdbcTemplate beans).
+     */
     @ArchTest
     static final ArchRule jdbcOnlyInStoreImpls = noClasses()
             .that().haveSimpleNameNotContaining("MySql")
+            .and().doNotHaveSimpleName("TimescaleConfig")
             .should().accessClassesThat().areAssignableTo(JdbcTemplate.class)
-            .orShould().accessClassesThat().haveFullyQualifiedName(JdbcTemplate.class.getName()); /** common must not depend on any other aluco package. */
+            .orShould().accessClassesThat().haveFullyQualifiedName(JdbcTemplate.class.getName());
 
-            @ArchTest
+    /** common must not depend on any other aluco package. */
+    @ArchTest
     static final ArchRule commonIsSelfContained = noClasses()
             .that().resideInAPackage("..common..")
             .should().dependOnClassesThat().resideInAPackage("com.aluco.server..")

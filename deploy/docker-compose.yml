@@ -16,7 +16,7 @@ services:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]
       interval: 5s
       timeout: 3s
- retries: 20
+      retries: 20
 
   emqx:
     image: emqx/emqx:5.8.6

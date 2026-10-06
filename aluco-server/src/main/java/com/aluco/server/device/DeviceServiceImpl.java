@@ -83,10 +83,8 @@ public class DeviceServiceImpl implements DeviceService {
         // 3. Delete device (FK cascade removes device_state)
         deviceRepository.delete(device);
 
-        // 4. Evict cache
-        if (stateStore instanceof MySqlStateStore mysqlStore) {
-            mysqlStore.evictDevice(deviceKey);
-        }
+        // 4. Evict state cache
+        stateStore.evictDevice(deviceKey);
     }
 
     /**

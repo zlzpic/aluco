@@ -3,6 +3,7 @@ package com.aluco.server.device;
 import com.aluco.server.common.DeviceState;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -23,6 +24,7 @@ import java.util.stream.Collectors;
  * All device_state SQL lives here (spec 4: no SQL outside store impls).
  */
 @Repository
+@ConditionalOnProperty(name = "aluco.store.state", havingValue = "mysql", matchIfMissing = true)
 public class MySqlStateStore implements StateStore {
 
     private static final TypeReference<Map<String, Double>> METRICS_TYPE = new TypeReference<>() {};
@@ -98,7 +100,8 @@ public class MySqlStateStore implements StateStore {
         }
     }
 
-    /** For admin/device deletion: evict cache entry. */
+    /** For admin/device deletion: evict cache entry (device_state row is FK-cascaded). */
+    @Override
     public void evictDevice(String deviceKey) {
         deviceIds.remove(deviceKey);
     }

@@ -12,8 +12,8 @@ import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
-import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.header.internals.RecordHeader;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.slf4j.Logger;
@@ -30,6 +30,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Enhanced Kafka consumer with retry, DLQ, and monitoring (v2 spec 6.1).
@@ -50,6 +52,7 @@ public class KafkaTelemetryConsumer {
     private static final String GROUP_ID = "aluco-server";
     private static final int MAX_RETRIES = 3;
     private static final Duration POLL_TIMEOUT = Duration.ofSeconds(1);
+    private static final int BATCH_SIZE = 500;
 
     private final KafkaConsumer<String, String> consumer;
     private final KafkaProducer<String, String> dlqProducer;
@@ -59,8 +62,9 @@ public class KafkaTelemetryConsumer {
     private final AlertingEngine alertingEngine;
     private final PresenceTracker presenceTracker;
     private final MeterRegistry meterRegistry;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
     private final Counter dlqCounter;
+    private final AtomicLong kafkaLag = new AtomicLong(0);
     private volatile boolean running = true;
     private Thread consumerThread;
 
@@ -71,7 +75,9 @@ public class KafkaTelemetryConsumer {
             LivePush livePush,
             AlertingEngine alertingEngine,
             PresenceTracker presenceTracker,
-            MeterRegistry meterRegistry) {
+            MeterRegistry meterRegistry,
+            KafkaProducer<String, String> dlqProducer,
+            ObjectMapper objectMapper) {
         this.timeSeriesStore = timeSeriesStore;
         this.stateStore = stateStore;
         this.livePush = livePush;
@@ -79,6 +85,8 @@ public class KafkaTelemetryConsumer {
         this.presenceTracker = presenceTracker;
         this.meterRegistry = meterRegistry;
         this.dlqCounter = meterRegistry.counter("aluco.kafka.dlq");
+        this.dlqProducer = dlqProducer;
+        this.objectMapper = objectMapper;
 
         Properties consumerProps = new Properties();
         consumerProps.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
@@ -87,16 +95,9 @@ public class KafkaTelemetryConsumer {
         consumerProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         consumerProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         consumerProps.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
-        consumerProps.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, 500);
+        consumerProps.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, BATCH_SIZE);
         this.consumer = new KafkaConsumer<>(consumerProps);
-
-        Properties producerProps = new Properties();
-        producerProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
-        producerProps.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG,
-                "org.apache.kafka.common.serialization.StringSerializer");
-        producerProps.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG,
-                "org.apache.kafka.common.serialization.StringSerializer");
-        this.dlqProducer = new KafkaProducer<>(producerProps);
+        meterRegistry.gauge("aluco.kafka.lag", kafkaLag);
     }
 
     @PostConstruct
@@ -116,10 +117,6 @@ public class KafkaTelemetryConsumer {
         if (consumer != null) {
             consumer.close();
         }
-        if (dlqProducer != null) {
-            dlqProducer.flush();
-            dlqProducer.close();
-        }
     }
 
     private void consumeLoop() {
@@ -135,11 +132,33 @@ public class KafkaTelemetryConsumer {
                 // Process batch with retry logic
                 processBatch(records);
 
+                // Gauge: unconsumed records ahead of the current position (spec 6.1)
+                updateLag();
+
                 // Commit offset after successful processing
                 consumer.commitSync();
             } catch (Exception e) {
                 log.error("Kafka consumer error: {}", e.getMessage(), e);
             }
+        }
+    }
+
+    /** Max consumer lag across assigned partitions: log-end-offset minus current position. */
+    private void updateLag() {
+        try {
+            Set<TopicPartition> parts = consumer.assignment();
+            if (parts.isEmpty()) {
+                return;
+            }
+            Map<TopicPartition, Long> ends = consumer.endOffsets(parts);
+            long total = 0;
+            for (TopicPartition tp : parts) {
+                long pos = consumer.position(tp);
+                total += Math.max(0, ends.getOrDefault(tp, pos) - pos);
+            }
+            kafkaLag.set(total);
+        } catch (Exception e) {
+            log.debug("kafka lag update skipped: {}", e.getMessage());
         }
     }
 

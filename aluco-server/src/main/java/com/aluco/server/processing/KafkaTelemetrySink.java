@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.common.header.internals.RecordHeader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -22,7 +21,6 @@ public class KafkaTelemetrySink implements TelemetrySink {
 
     private static final Logger log = LoggerFactory.getLogger(KafkaTelemetrySink.class);
     private static final String TOPIC = "aluco.telemetry";
-    private static final String DLQ_TOPIC = "aluco.telemetry.dlq";
     private static final int MAX_RETRIES = 3;
 
     private final KafkaProducer<String, String> producer;
@@ -30,7 +28,7 @@ public class KafkaTelemetrySink implements TelemetrySink {
 
     public KafkaTelemetrySink(
             @Value("${aluco.kafka.bootstrap-servers:localhost:9092}") String bootstrapServers,
-            ObjectMapper objectMapper) {
+            ObjectMapper kafkaJsonMapper) {
         Properties props = new Properties();
         props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG,
@@ -42,7 +40,7 @@ public class KafkaTelemetrySink implements TelemetrySink {
         props.put(ProducerConfig.RETRIES_CONFIG, MAX_RETRIES);
         props.put(ProducerConfig.COMPRESSION_TYPE_CONFIG, "snappy");
         this.producer = new KafkaProducer<>(props);
-        this.objectMapper = objectMapper;
+        this.objectMapper = kafkaJsonMapper;
     }
 
     @Override
@@ -62,25 +60,9 @@ public class KafkaTelemetrySink implements TelemetrySink {
         }
     }
 
-    private void sendToDlq(TelemetryMessage msg, String reason) {
-        try {
-            String value = objectMapper.writeValueAsString(msg);
-            ProducerRecord<String, String> record = new ProducerRecord<>(
-                    DLQ_TOPIC, null, System.currentTimeMillis(), msg.deviceKey(), value);
-            record.headers().add(new RecordHeader("error_reason", reason.getBytes()));
-            producer.send(record, (metadata, exception) -> {
-                if (exception != null) {
-                    log.error("Failed to send DLQ message: {}", exception.getMessage());
-                }
-            });
-        } catch (Exception e) {
-            log.error("DLQ send error: {}", e.getMessage());
-        }
-    }
-
     @PostConstruct
     public void init() {
-        log.info("KafkaTelemetrySink initialized: {} -> {}", TOPIC, DLQ_TOPIC);
+        log.info("KafkaTelemetrySink initialized: topic={}", TOPIC);
     }
 
     @PreDestroy

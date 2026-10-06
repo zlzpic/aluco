@@ -1,22 +1,30 @@
 package com.aluco.server.device;
 
 import com.aluco.server.common.DeviceState;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Repository;
 
-import java.util.*;
-import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 /**
- * Redis StateStore implementation (v2 spec 6.2, Phase 2 only).
+ * Redis StateStore implementation (ADR-0010, verification 6.2).
  * Activated when aluco.store.state=redis.
  *
  * Schema:
  *   - aluco:state:{deviceKey} → HASH: metrics(JSON), lastSeenAt(epoch ms), online(0/1)
  *   - aluco:last_seen → ZSET: member=deviceKey, score=lastSeenAt
+ *
+ * Upsert is a single Lua script (HSET + ZADD) so the state hash and the
+ * last-seen index never diverge.
  */
 @Repository
 @ConditionalOnProperty(name = "aluco.store.state", havingValue = "redis")
@@ -24,6 +32,14 @@ public class RedisStateStore implements StateStore {
 
     private static final String STATE_PREFIX = "aluco:state:";
     private static final String LAST_SEEN_ZSET = "aluco:last_seen";
+    private static final TypeReference<Map<String, Double>> METRICS_TYPE = new TypeReference<>() {};
+
+    /** HSET {stateKey} metrics lastSeenAt online + ZADD {zset} score deviceKey, atomically. */
+    private static final RedisScript<Long> UPSERT_SCRIPT = new DefaultRedisScript<>(
+            "redis.call('HSET', KEYS[1], 'metrics', ARGV[1], 'lastSeenAt', ARGV[2], 'online', ARGV[3]);"
+                    + "redis.call('ZADD', KEYS[2], ARGV[4], KEYS[3]);"
+                    + "return 1",
+            Long.class);
 
     private final StringRedisTemplate redis;
     private final ObjectMapper mapper = new ObjectMapper();
@@ -34,17 +50,15 @@ public class RedisStateStore implements StateStore {
 
     @Override
     public void upsert(DeviceState state) {
-        String key = STATE_PREFIX + state.deviceKey();
-        Map<String, String> hash = new HashMap<>();
-        hash.put("metrics", toJson(state.metrics()));
-        hash.put("lastSeenAt", String.valueOf(state.lastSeenAt() != null ? state.lastSeenAt() : 0));
-        hash.put("online", state.online() ? "1" : "0");
-
+        Map<String, Double> metrics = state.metrics() == null ? Map.of() : state.metrics();
+        Long lastSeen = state.lastSeenAt();
         try {
-            String hashJson = mapper.writeValueAsString(hash);
-            redis.opsForValue().set(key, hashJson);
-            redis.opsForZSet().add(LAST_SEEN_ZSET, state.deviceKey(),
-                    state.lastSeenAt() != null ? state.lastSeenAt() : 0);
+            redis.execute(UPSERT_SCRIPT,
+                    List.of(STATE_PREFIX + state.deviceKey(), LAST_SEEN_ZSET, state.deviceKey()),
+                    toJson(metrics),
+                    lastSeen != null ? String.valueOf(lastSeen) : "",
+                    state.online() ? "1" : "0",
+                    lastSeen != null ? String.valueOf(lastSeen) : "0");
         } catch (Exception e) {
             throw new IllegalStateException("Redis upsert failed: " + e.getMessage(), e);
         }
@@ -52,20 +66,8 @@ public class RedisStateStore implements StateStore {
 
     @Override
     public Optional<DeviceState> get(String deviceKey) {
-        String key = STATE_PREFIX + deviceKey;
-        String json = redis.opsForValue().get(key);
-        if (json == null) {
-            return Optional.empty();
-        }
-        try {
-            Map<String, String> map = mapper.readValue(json, Map.class);
-            Map<String, Double> metrics = fromJson(map.getOrDefault("metrics", "{}"));
-            long lastSeen = Long.parseLong(map.getOrDefault("lastSeenAt", "0"));
-            boolean online = "1".equals(map.getOrDefault("online", "0"));
-            return Optional.of(new DeviceState(deviceKey, metrics, online, lastSeen));
-        } catch (Exception e) {
-            return Optional.empty();
-        }
+        Map<Object, Object> entries = redis.opsForHash().entries(STATE_PREFIX + deviceKey);
+        return entries.isEmpty() ? Optional.empty() : Optional.of(fromHash(deviceKey, entries));
     }
 
     @Override
@@ -73,39 +75,41 @@ public class RedisStateStore implements StateStore {
         if (deviceKeys == null || deviceKeys.isEmpty()) {
             return List.of();
         }
-        List<String> keys = deviceKeys.stream()
-                .map(k -> STATE_PREFIX + k)
-                .collect(Collectors.toList());
-        List<String> values = redis.opsForValue().multiGet(keys);
-        if (values == null || values.isEmpty()) {
-            return List.of();
-        }
         List<DeviceState> result = new ArrayList<>();
-        Iterator<String> deviceKeyIter = deviceKeys.iterator();
-        for (String value : values) {
-            if (value == null) {
-                deviceKeyIter.next();
-                continue;
-            }
-            String deviceKey = deviceKeyIter.next();
-            try {
-                Map<String, String> map = mapper.readValue(value, Map.class);
-                Map<String, Double> metrics = fromJson(map.getOrDefault("metrics", "{}"));
-                long lastSeen = Long.parseLong(map.getOrDefault("lastSeenAt", "0"));
-                boolean online = "1".equals(map.getOrDefault("online", "0"));
-                result.add(new DeviceState(deviceKey, metrics, online, lastSeen));
-            } catch (Exception e) {
-                // skip corrupted entry
+        for (String deviceKey : deviceKeys) {
+            Map<Object, Object> entries = redis.opsForHash().entries(STATE_PREFIX + deviceKey);
+            if (!entries.isEmpty()) {
+                result.add(fromHash(deviceKey, entries));
             }
         }
         return result;
     }
 
-    /** Evict device from cache (used on device deletion). */
+    @Override
     public void evictDevice(String deviceKey) {
-        String key = STATE_PREFIX + deviceKey;
-        redis.delete(key);
+        redis.delete(STATE_PREFIX + deviceKey);
         redis.opsForZSet().remove(LAST_SEEN_ZSET, deviceKey);
+    }
+
+    static String stateKey(String deviceKey) {
+        return STATE_PREFIX + deviceKey;
+    }
+
+    static String lastSeenZset() {
+        return LAST_SEEN_ZSET;
+    }
+
+    private DeviceState fromHash(String deviceKey, Map<Object, Object> entries) {
+        String metricsJson = str(entries.get("metrics"));
+        String lastSeen = str(entries.get("lastSeenAt"));
+        return new DeviceState(deviceKey,
+                fromJson(metricsJson),
+                "1".equals(str(entries.get("online"))),
+                lastSeen == null || lastSeen.isBlank() ? null : Long.parseLong(lastSeen));
+    }
+
+    private static String str(Object v) {
+        return v == null ? null : v.toString();
     }
 
     private String toJson(Map<String, Double> metrics) {
@@ -116,10 +120,9 @@ public class RedisStateStore implements StateStore {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private Map<String, Double> fromJson(String json) {
         try {
-            return mapper.readValue(json, Map.class);
+            return json == null || json.isBlank() ? Map.of() : mapper.readValue(json, METRICS_TYPE);
         } catch (Exception e) {
             return Map.of();
         }

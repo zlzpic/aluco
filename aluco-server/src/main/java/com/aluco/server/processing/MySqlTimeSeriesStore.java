@@ -3,6 +3,7 @@ package com.aluco.server.processing;
 import com.aluco.server.common.TelemetryPoint;
 import io.micrometer.core.instrument.DistributionSummary;
 import io.micrometer.core.instrument.MeterRegistry;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -20,6 +21,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * The only class outside device/* allowed to contain telemetry SQL.
  */
 @Repository
+@ConditionalOnProperty(name = "aluco.store.timeseries", havingValue = "mysql", matchIfMissing = true)
 public class MySqlTimeSeriesStore implements TimeSeriesStore {
 
     /** raw query hard cap (spec 5.5). Controller sets X-Truncated when hit. */
