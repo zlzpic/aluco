@@ -2,6 +2,8 @@ package com.aluco.server.device;
 
 import com.aluco.server.processing.PresenceTracker;
 import com.aluco.server.push.LivePush;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -26,15 +28,18 @@ public class OfflineDetectionTask {
     private final OfflineDetection offlineDetection;
     private final LivePush livePush;
     private final PresenceTracker presenceTracker;
+    private final Counter offlineFlips;
     private final int thresholdSeconds;
 
     public OfflineDetectionTask(OfflineDetection offlineDetection,
                                 LivePush livePush,
                                 PresenceTracker presenceTracker,
+                                MeterRegistry registry,
                                 @Value("${aluco.offline.threshold-seconds:60}") int thresholdSeconds) {
         this.offlineDetection = offlineDetection;
         this.livePush = livePush;
         this.presenceTracker = presenceTracker;
+        this.offlineFlips = registry.counter("aluco.offline.flips");
         this.thresholdSeconds = thresholdSeconds;
     }
 
@@ -43,6 +48,7 @@ public class OfflineDetectionTask {
         try {
             long cutoff = System.currentTimeMillis() - thresholdSeconds * 1000L;
             for (String deviceKey : offlineDetection.sweepOffline(cutoff)) {
+                offlineFlips.increment();
                 presenceTracker.markOffline(deviceKey);
                 livePush.pushPresence(deviceKey, false);
                 log.info("device {} went offline", deviceKey);
