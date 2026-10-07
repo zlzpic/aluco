@@ -12,4 +12,5 @@ public interface LivePush {
     void pushPresence(String deviceKey, boolean online);
     void subscribe(WebSocketSession session, Collection<String> deviceKeys);
     void unsubscribe(WebSocketSession session, Collection<String> deviceKeys);
+    void pushCommandEvent(String cmdId, String deviceKey, String status);
 }

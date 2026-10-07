@@ -14,4 +14,7 @@ public interface StateStore {
     void upsert(DeviceState state);
     Optional<DeviceState> get(String deviceKey);
     List<DeviceState> list(Collection<String> deviceKeys);
+
+    /** Drop cached state for a deleted device (cache/row cleanup, FK may already cascade). */
+    void evictDevice(String deviceKey);
 }

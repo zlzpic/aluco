@@ -10,4 +10,6 @@ public interface AlertRuleService {
     void delete(long ruleId);
     Page<AlertRule> page(int page, int size);
     List<AlertRule> listEnabled();
+    /** Get by ID (spec 4.2 #4). */
+    AlertRule getById(long id);
 }

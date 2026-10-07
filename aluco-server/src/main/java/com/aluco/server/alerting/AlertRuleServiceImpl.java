@@ -84,6 +84,12 @@ public class AlertRuleServiceImpl implements AlertRuleService {
         return enabledCache;
     }
 
+    /** Get by ID (spec 4.2 #4). */
+    @Override
+    public AlertRule getById(long id) {
+        return ruleRepository.findById(id).orElse(null);
+    }
+
     private void refreshCache() {
         enabledCache = List.copyOf(ruleRepository.findByEnabledTrue());
     }

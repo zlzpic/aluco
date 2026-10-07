@@ -2,7 +2,6 @@ package com.aluco.server.api;
 
 import com.aluco.server.alerting.AlertEvent;
 import com.aluco.server.alerting.AlertEventService;
-import com.aluco.server.alerting.AlertEventServiceImpl;
 import com.aluco.server.common.Page;
 import org.springframework.web.bind.annotation.*;
 
@@ -28,6 +27,6 @@ public class AlertController {
     @PostMapping("/{id}/ack")
     public AlertEvent ack(@PathVariable long id) {
         eventService.ack(id);
-        return ((AlertEventServiceImpl) eventService).getById(id);
+        return eventService.getById(id);
     }
 }

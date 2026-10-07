@@ -33,6 +33,7 @@ public class SimDevice implements MqttCallback {
     private final int deviceIndex;
     private final String[] metrics;
     private final double spikeProbability;
+    private final double ackDropProbability;
     private final AtomicLong sentTotal;
     private final AtomicLong failureTotal;
     private final ScheduledExecutorService scheduler;
@@ -51,6 +52,7 @@ public class SimDevice implements MqttCallback {
 
     public SimDevice(String broker, String siteId, String deviceKey, int deviceIndex,
                      long intervalMs, String[] metrics, double spikeProbability,
+                     double ackDropProbability,
                      AtomicLong sentTotal, AtomicLong failureTotal,
                      ScheduledExecutorService scheduler) {
         this.broker = broker;
@@ -60,6 +62,7 @@ public class SimDevice implements MqttCallback {
         this.intervalMs = intervalMs;
         this.metrics = metrics;
         this.spikeProbability = spikeProbability;
+        this.ackDropProbability = ackDropProbability;
         this.sentTotal = sentTotal;
         this.failureTotal = failureTotal;
         this.scheduler = scheduler;
@@ -173,6 +176,9 @@ public class SimDevice implements MqttCallback {
         intervalMs = cmd.intervalSec() * 1000L;
         System.out.println("[" + deviceKey + "] SET_INTERVAL applied: "
                 + cmd.intervalSec() + "s (cmdId=" + cmd.cmdId() + ")");
+
+        // Send cmdack (v2 spec 5.1.2)
+        sendCmdack(cmd.cmdId(), "ACKED", "interval=" + cmd.intervalSec() + "s applied");
     }
 
     @Override
@@ -184,5 +190,34 @@ public class SimDevice implements MqttCallback {
     @Override
     public void deliveryComplete(IMqttDeliveryToken token) {
         // fire-and-forget
+    }
+
+    /** Send cmdack for a processed command (v2 spec 5.1.2). */
+    private void sendCmdack(String cmdId, String status, String message) {
+        // Simulate ack drop probability (spec 9.2: --ack-drop-probability)
+        if (ackDropProbability > 0 && random.nextDouble() < ackDropProbability) {
+            System.out.println("[" + deviceKey + "] cmdack dropped (simulated) for cmdId=" + cmdId);
+            return;
+        }
+        try {
+            if (client == null || !client.isConnected()) {
+                return;
+            }
+            Map<String, Object> ack = new LinkedHashMap<>();
+            ack.put("v", 1);
+            ack.put("cmdId", cmdId);
+            ack.put("deviceId", deviceKey);
+            ack.put("ts", System.currentTimeMillis());
+            ack.put("status", status);
+            ack.put("message", message);
+
+            byte[] payload = EnvelopeJson.getMapper().writeValueAsBytes(ack);
+            MqttMessage msg = new MqttMessage(payload);
+            msg.setQos(1);
+            client.publish("aluco/" + siteId + "/" + deviceKey + "/cmdack", msg);
+            System.out.println("[" + deviceKey + "] cmdack sent: cmdId=" + cmdId + " status=" + status);
+        } catch (Exception e) {
+            System.err.println("[" + deviceKey + "] cmdack publish failed: " + e.getMessage());
+        }
     }
 }

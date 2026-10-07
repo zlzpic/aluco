@@ -70,7 +70,8 @@ public class AlertRule {
     public String getName() { return name; }
     public String getMetric() { return metric; }
     public Op getOp() { return op; }
-    public double getThresholdVal() { return thresholdVal; }
+    public double getThreshold() { return thresholdVal; }  // REST/WS uses "threshold"
+    public double getThresholdVal() { return thresholdVal; }  // JPA column name
     public String getDeviceKey() { return deviceKey; }
     public boolean isEnabled() { return enabled; }
     public Instant getCreatedAt() { return createdAt; }

@@ -1,6 +1,7 @@
 package com.aluco.server.ingestion;
 
 import com.aluco.server.common.DeviceCommand;
+import com.aluco.server.command.CommandService;
 import com.aluco.server.device.DeviceRepository;
 import com.aluco.server.processing.TelemetryProcessor;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -17,8 +18,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
 
 /**
  * Paho-based MQTT endpoint (spec 7.3.1):
@@ -42,6 +45,7 @@ public class MqttIngestor implements TelemetryIngestor, CommandPublisher, MqttCa
     private final long reconnectIntervalMs;
     private final TelemetryProcessor processor;
     private final DeviceRepository deviceRepository;
+    private final CommandService commandService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private volatile MqttClient client;
@@ -53,13 +57,15 @@ public class MqttIngestor implements TelemetryIngestor, CommandPublisher, MqttCa
                         @Value("${aluco.mqtt.telemetry-topic}") String telemetryTopic,
                         @Value("${aluco.mqtt.reconnect-interval-ms:5000}") long reconnectIntervalMs,
                         TelemetryProcessor processor,
-                        DeviceRepository deviceRepository) {
+                        DeviceRepository deviceRepository,
+                        CommandService commandService) {
         this.broker = broker;
         this.clientId = clientId;
         this.telemetryTopic = telemetryTopic;
         this.reconnectIntervalMs = reconnectIntervalMs;
         this.processor = processor;
         this.deviceRepository = deviceRepository;
+        this.commandService = commandService;
     }
 
     @PostConstruct
@@ -97,16 +103,15 @@ public class MqttIngestor implements TelemetryIngestor, CommandPublisher, MqttCa
 
     private void connect() throws Exception {
         disconnectQuietly();
-        // unique-ish client id avoids clashing with a stale broker session
         MqttClient c = new MqttClient(broker, clientId + "-" + System.currentTimeMillis(),
                 new MemoryPersistence());
         MqttConnectOptions opts = new MqttConnectOptions();
         opts.setCleanSession(true);
         opts.setAutomaticReconnect(false); // we manage retries ourselves
         opts.setConnectionTimeout(10);
+        this.client = c;
         c.setCallback(this);
         c.connect(opts);
-        this.client = c;
         log.info("MQTT connected to {}", broker);
     }
 
@@ -163,6 +168,31 @@ public class MqttIngestor implements TelemetryIngestor, CommandPublisher, MqttCa
         } catch (Exception e) {
             throw new RuntimeException("failed to publish command to " + deviceKey, e);
         }
+    }
+
+    /**
+     * Create and publish a SET_INTERVAL command (spec 5.1.4 flow).
+     */
+    @Override
+    @Transactional
+    public String publishSetInterval(String deviceKey, int intervalSec) {
+        // 1. Persist
+        com.aluco.server.command.Command cmd = commandService.createSetInterval(deviceKey, intervalSec);
+
+        // 2. Publish to MQTT
+        try {
+            DeviceCommand wireCmd = new DeviceCommand(
+                    cmd.getCmdId(),
+                    DeviceCommand.TYPE_SET_INTERVAL,
+                    Map.of("intervalSec", intervalSec)
+            );
+            publish(deviceKey, wireCmd);
+        } catch (Exception e) {
+            // Publish failure; command stays in SENT state for retry or timeout
+            throw new RuntimeException("failed to publish command to " + deviceKey, e);
+        }
+
+        return cmd.getCmdId();
     }
 
     private void disconnectQuietly() {

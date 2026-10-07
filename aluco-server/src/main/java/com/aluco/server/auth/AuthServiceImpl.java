@@ -1,5 +1,6 @@
-package com.aluco.server.api;
+package com.aluco.server.auth;
 
+import com.aluco.server.common.AuthService;
 import com.aluco.server.common.BizException;
 import com.aluco.server.common.JwtService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -8,18 +9,18 @@ import org.springframework.stereotype.Service;
 @Service
 public class AuthServiceImpl implements AuthService {
 
-    private final UserRepository userRepository;
+    private final AppUserRepository appUserRepository;
     private final JwtService jwtService;
     private final BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
 
-    public AuthServiceImpl(UserRepository userRepository, JwtService jwtService) {
-        this.userRepository = userRepository;
+    public AuthServiceImpl(AppUserRepository appUserRepository, JwtService jwtService) {
+        this.appUserRepository = appUserRepository;
         this.jwtService = jwtService;
     }
 
     @Override
     public String login(String username, String password) {
-        User user = userRepository.findByUsername(username)
+        AppUser user = appUserRepository.findByUsername(username)
                 .orElseThrow(() -> BizException.unauthorized("BAD_CREDENTIALS",
                         "invalid username or password"));
         if (!encoder.matches(password, user.getPasswordHash())) {

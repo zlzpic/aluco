@@ -9,16 +9,7 @@ import java.util.regex.Pattern;
 
 /**
  * Stable cross-version contract for the telemetry envelope (spec 5.2, 12.2).
- * Pure parser/validator with no dependency on other packages; a future Go
- * gateway implements the same contract.
- *
- * Drop rules (caller counts each drop):
- *  - payload larger than 4KB
- *  - unparsable JSON / missing required fields
- *  - v != 1
- *  - deviceId != third topic segment
- *  - ts missing or in the future (60s clock-skew tolerance)
- *  - metrics empty after skipping illegal keys
+ * Also parses cmdack messages (spec 5.1.2).
  */
 public class EnvelopeCodec {
 
@@ -28,17 +19,16 @@ public class EnvelopeCodec {
     private static final Pattern METRIC_KEY = Pattern.compile("[a-zA-Z][a-zA-Z0-9_]{0,63}");
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    /** Result of parsing: either a valid message or a machine-readable drop reason. */
     public record ParseResult(TelemetryMessage message, String dropReason) {
         public boolean ok() { return message != null; }
         static ParseResult ok(TelemetryMessage m) { return new ParseResult(m, null); }
         static ParseResult drop(String reason) { return new ParseResult(null, reason); }
     }
 
-    /**
-     * @param topic   full MQTT topic, e.g. aluco/site-01/TH-0001/telemetry
-     * @param payload raw message bytes
-     */
+    public record CmdackParseResult(CmdackMessage message, String dropReason) {
+        public boolean ok() { return message != null; }
+    }
+
     public ParseResult parse(String topic, byte[] payload) {
         if (payload == null || payload.length == 0 || payload.length > MAX_PAYLOAD_BYTES) {
             return ParseResult.drop("PAYLOAD_TOO_LARGE_OR_EMPTY");
@@ -94,7 +84,6 @@ public class EnvelopeCodec {
         }
         Map<String, Double> metrics = new LinkedHashMap<>();
         metricsNode.fields().forEachRemaining(e -> {
-            // illegal keys are skipped, not fatal (spec 5.2)
             if (METRIC_KEY.matcher(e.getKey()).matches() && e.getValue().isNumber()) {
                 metrics.put(e.getKey(), e.getValue().doubleValue());
             }
@@ -104,5 +93,62 @@ public class EnvelopeCodec {
         }
 
         return ParseResult.ok(new TelemetryMessage(topicDeviceKey, siteId, tsMs, seq, metrics));
+    }
+
+    /**
+     * Parse cmdack message (spec 5.1.2):
+     * { "v": 1, "cmdId": "uuid", "deviceId": "TH-0001", "ts": 1752739200000,
+     *   "status": "ACKED", "message": "interval=5s applied" }
+     */
+    public CmdackParseResult parseCmdack(String topic, String payload) {
+        if (payload == null || payload.isBlank()) {
+            return new CmdackParseResult(null, "EMPTY_PAYLOAD");
+        }
+
+        String[] seg = topic.split("/");
+        if (seg.length != 4 || !"aluco".equals(seg[0]) || !"cmdack".equals(seg[3])) {
+            return new CmdackParseResult(null, "BAD_TOPIC");
+        }
+        String topicDeviceKey = seg[2];
+
+        final JsonNode root;
+        try {
+            root = MAPPER.readTree(payload);
+        } catch (Exception e) {
+            return new CmdackParseResult(null, "BAD_JSON");
+        }
+        if (root == null || !root.isObject()) {
+            return new CmdackParseResult(null, "BAD_JSON");
+        }
+
+        JsonNode v = root.get("v");
+        if (v == null || !v.isInt() || v.intValue() != 1) {
+            return new CmdackParseResult(null, "UNSUPPORTED_VERSION");
+        }
+
+        JsonNode cmdIdNode = root.get("cmdId");
+        if (cmdIdNode == null || !cmdIdNode.isTextual()) {
+            return new CmdackParseResult(null, "MISSING_CMD_ID");
+        }
+        String cmdId = cmdIdNode.textValue();
+
+        JsonNode deviceIdNode = root.get("deviceId");
+        if (deviceIdNode == null || !deviceIdNode.isTextual()) {
+            return new CmdackParseResult(null, "MISSING_DEVICE_ID");
+        }
+        String deviceId = deviceIdNode.textValue();
+
+        JsonNode statusNode = root.get("status");
+        if (statusNode == null || !statusNode.isTextual()) {
+            return new CmdackParseResult(null, "MISSING_STATUS");
+        }
+        String status = statusNode.textValue();
+
+        JsonNode messageNode = root.get("message");
+        String message = messageNode != null && messageNode.isTextual() ? messageNode.textValue() : null;
+
+        return new CmdackParseResult(
+                new CmdackMessage(1, cmdId, deviceId, System.currentTimeMillis(), status, message),
+                null);
     }
 }

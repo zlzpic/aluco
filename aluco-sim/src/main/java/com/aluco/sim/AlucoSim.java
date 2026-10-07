@@ -4,6 +4,8 @@ import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
+import com.aluco.sim.bench.BackfillTool;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executors;
@@ -68,12 +70,18 @@ public class AlucoSim implements Runnable {
     @Option(names = "--password", defaultValue = "admin123")
     String password;
 
+    @Option(names = "--ack-drop-probability", defaultValue = "0.0",
+            description = "probability of dropping cmdack (0..1, 0=always send)")
+    double ackDropProbability;
+
     private final AtomicLong sentTotal = new AtomicLong();
     private final AtomicLong failureTotal = new AtomicLong();
     private final List<SimDevice> fleet = new ArrayList<>();
 
     public static void main(String[] args) {
-        System.exit(new CommandLine(new AlucoSim()).execute(args));
+        CommandLine cl = new CommandLine(new AlucoSim());
+        cl.addSubcommand(new BackfillTool());
+        System.exit(cl.execute(args));
     }
 
     @Override
@@ -102,7 +110,7 @@ public class AlucoSim implements Runnable {
         for (int i = 1; i <= devices; i++) {
             String key = devicePrefix + String.format("%04d", i);
             SimDevice device = new SimDevice(broker, site, key, i, intervalMs, metricNames,
-                    spikeProbability, sentTotal, failureTotal, scheduler);
+                    spikeProbability, ackDropProbability, sentTotal, failureTotal, scheduler);
             fleet.add(device);
             long delay = devices <= 1 ? 0 : rampMs * (i - 1) / (devices - 1);
             scheduler.schedule(device::start, delay, TimeUnit.MILLISECONDS);

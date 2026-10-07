@@ -3,6 +3,7 @@ package com.aluco.server.device;
 import com.aluco.server.common.DeviceState;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -12,20 +13,27 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
- * MySQL StateStore (spec 7.3.4): one row per device in device_state,
+ * MySQL implementation of the StateStore seam (spec 7.3.4):
+ * one row per device in device_state,
  * metrics stored as a JSON document, merged-override on each upsert.
  * All device_state SQL lives here (spec 4: no SQL outside store impls).
  */
 @Repository
+@ConditionalOnProperty(name = "aluco.store.state", havingValue = "mysql", matchIfMissing = true)
 public class MySqlStateStore implements StateStore {
 
     private static final TypeReference<Map<String, Double>> METRICS_TYPE = new TypeReference<>() {};
 
     private final JdbcTemplate jdbc;
     private final ObjectMapper mapper = new ObjectMapper();
+
+    /** deviceKey -> device.id cache; invalidated on miss (device may be new) */
+    private final Map<String, Long> deviceIds = new ConcurrentHashMap<>();
 
     public MySqlStateStore(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
@@ -71,26 +79,6 @@ public class MySqlStateStore implements StateStore {
                 deviceKeys.toArray());
     }
 
-    /**
-     * Offline sweep (spec 7.3.5): flips stale online rows to offline and
-     * returns the device_keys that transitioned (callers push presence).
-     * Extra method on the impl class — the seam interface stays per spec.
-     */
-    public List<String> flipStaleToOffline(int thresholdSeconds) {
-        List<String> stale = jdbc.query(
-                "SELECT d.device_key FROM device_state s JOIN device d ON d.id = s.device_id "
-                        + "WHERE s.online = 1 AND s.last_seen_at < "
-                        + "DATE_SUB(NOW(3), INTERVAL ? SECOND)",
-                (rs, i) -> rs.getString(1), thresholdSeconds);
-        if (!stale.isEmpty()) {
-            jdbc.update("UPDATE device_state s JOIN device d ON d.id = s.device_id "
-                    + "SET s.online = 0 "
-                    + "WHERE s.online = 1 AND s.last_seen_at < "
-                    + "DATE_SUB(NOW(3), INTERVAL ? SECOND)", thresholdSeconds);
-        }
-        return stale;
-    }
-
     private DeviceState mapRow(String deviceKey, String metricsJson, boolean online,
                                Long lastSeenAt) {
         return new DeviceState(deviceKey, fromJson(metricsJson), online, lastSeenAt);
@@ -110,5 +98,16 @@ public class MySqlStateStore implements StateStore {
         } catch (Exception e) {
             return Map.of();
         }
+    }
+
+    /** For admin/device deletion: evict cache entry (device_state row is FK-cascaded). */
+    @Override
+    public void evictDevice(String deviceKey) {
+        deviceIds.remove(deviceKey);
+    }
+
+    /** For tests/ops: current known device ids. */
+    public Set<String> cachedDevices() {
+        return Set.copyOf(deviceIds.keySet());
     }
 }

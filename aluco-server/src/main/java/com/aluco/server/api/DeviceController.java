@@ -3,14 +3,13 @@ package com.aluco.server.api;
 import com.aluco.server.alerting.AlertEvent;
 import com.aluco.server.common.DeviceState;
 import com.aluco.server.common.Page;
-import com.aluco.server.common.TelemetryPoint;
 import com.aluco.server.device.CreateDeviceRequest;
 import com.aluco.server.device.Device;
 import com.aluco.server.device.DeviceCommandService;
 import com.aluco.server.device.DeviceService;
 import com.aluco.server.device.StateStore;
-import com.aluco.server.processing.MySqlTimeSeriesStore;
 import com.aluco.server.processing.TimeSeriesStore;
+import com.aluco.server.command.Command;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -21,8 +20,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -98,32 +95,47 @@ public class DeviceController {
             @RequestParam long to,
             @RequestParam @Pattern(regexp = "raw|1m|5m|1h|1d") String interval) {
         deviceService.get(deviceKey); // 404 guard
-        List<TelemetryPoint> points;
-        boolean truncated = false;
-        if (MySqlTimeSeriesStore.isRaw(interval)) {
-            List<Boolean> flag = new ArrayList<>(1);
-            points = ((MySqlTimeSeriesStore) timeSeriesStore)
-                    .queryRawWithTruncationFlag(deviceKey, metric, from, to, flag);
-            truncated = !flag.isEmpty() && flag.get(0);
-        } else {
-            points = timeSeriesStore.query(deviceKey, metric, from, to, interval);
-        }
+        TimeSeriesStore.QueryResult result = timeSeriesStore.query(deviceKey, metric, from, to, interval);
         Map<String, Object> body = Map.of(
                 "metric", metric,
-                "points", points.stream()
+                "points", result.points().stream()
                         .map(p -> Map.of("ts", p.ts(), "val", p.val()))
-                        .toList());
+                        .toList(),
+                "truncated", result.truncated());
         return ResponseEntity.ok()
-                .header("X-Truncated", String.valueOf(truncated))
+                .header("X-Truncated", String.valueOf(result.truncated()))
                 .body(body);
     }
 
-    /** #14 downlink SET_INTERVAL */
+    /** #14 downlink SET_INTERVAL (revised response: cmdId only) */
     @PostMapping("/{deviceKey}/commands/set-interval")
     public Map<String, Object> setInterval(@PathVariable String deviceKey,
                                            @Valid @RequestBody SetIntervalRequest req) {
         String cmdId = commandService.setReportInterval(deviceKey, req.intervalSec());
         return Map.of("cmdId", cmdId);
+    }
+
+    /** #16 rotate device token (v2 spec 5.2.4): old token invalidated immediately */
+    @PostMapping("/{deviceKey}/token/rotate")
+    public Map<String, Object> rotateToken(@PathVariable String deviceKey) {
+        String newToken = deviceService.rotateToken(deviceKey);
+        return Map.of("token", newToken);
+    }
+
+    /** #17 get command by cmdId */
+    @GetMapping("/commands/{cmdId}")
+    public Command getCommand(@PathVariable String cmdId) {
+        return commandService.getCommand(cmdId);
+    }
+
+    /** #18 list recent commands for a device */
+    @GetMapping("/{deviceKey}/commands")
+    public Page<Command> listCommands(@PathVariable String deviceKey,
+                                      @RequestParam(defaultValue = "1") int page,
+                                      @RequestParam(defaultValue = "20") int size) {
+        // For simplicity, return all commands (pagination can be added to CommandService if needed)
+        var commands = commandService.listCommands(deviceKey);
+        return Page.of(commands, commands.size(), page, size);
     }
 
     private Map<String, Object> deviceView(Device d, DeviceState s) {

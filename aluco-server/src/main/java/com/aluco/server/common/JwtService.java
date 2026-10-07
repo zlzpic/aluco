@@ -21,12 +21,15 @@ public class JwtService {
     private final SecretKey key;
     private final long ttlHours;
 
-    public JwtService(@Value("${aluco.jwt.secret}") String secret,
-                      @Value("${aluco.jwt.ttl-hours:24}") long ttlHours) {
+    // 构造方法：不再读取任何外部属性，直接硬编码
+    public JwtService() {
+        // 硬编码 secret（必须至少 32 个字符，否则会报错）
+        String secret = "aluco-dev-secret-change-me-in-production-0123456789abcdef";
         this.key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
-        this.ttlHours = ttlHours;
+        this.ttlHours = 24; // 硬编码有效期为 24 小时
     }
 
+    // 以下 method 完全不动，照抄原来的
     public String issue(String username) {
         Instant now = Instant.now();
         return Jwts.builder()
@@ -51,7 +54,6 @@ public class JwtService {
                 .parseSignedClaims(token).getPayload().getSubject();
     }
 
-    /** epoch ms of expiry for the login response (spec 5.5 #1). */
     public long expiresAt(String token) {
         return Jwts.parser().verifyWith(key).build()
                 .parseSignedClaims(token).getPayload().getExpiration().getTime();

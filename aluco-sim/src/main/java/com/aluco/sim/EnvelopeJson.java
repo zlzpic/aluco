@@ -13,6 +13,10 @@ public final class EnvelopeJson {
 
     private EnvelopeJson() {}
 
+    public static ObjectMapper getMapper() {
+        return MAPPER;
+    }
+
     /** { "v":1, "deviceId":..., "ts":..., "seq":..., "metrics":{...} } */
     public static byte[] envelope(String deviceId, long ts, long seq, Map<String, Double> metrics) {
         try {
