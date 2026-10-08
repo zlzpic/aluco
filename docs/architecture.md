@@ -263,10 +263,10 @@ React 18 + TS + Vite + AntD + ECharts。结构：
 
 ## 8. 部署与 CI
 
-- `deploy/docker-compose.yml`：`name: aluco`；mysql、emqx（demo 默认匿名，`EMQX_ALLOW_ANONYMOUS=false` 切凭证模式）、server、web、prometheus、grafana，sim 在 `demo` profile 后
+- `deploy/docker-compose.yml`：`name: aluco`；mysql、emqx（demo 默认匿名，`EMQX_ALLOW_ANONYMOUS=false` 切凭证模式）、server、web、prometheus、grafana，sim 在 `demo` profile 后。server 带 actuator healthcheck，sim 用 `depends_on: server: condition: service_healthy` 挂上去：否则 sim 会抢在 REST 就绪前 seed，登录被拒后照常上报，server 把每一条都判成未注册设备而 drop
 - `nginx.conf`：静态托管 + `/api`、`/ws` 反代（WS Upgrade 头）
 - `deploy/scripts/`：benchmark 系列脚本（`.bat`/`.ps1`/`.sh`）。模拟器 jar **不再入库**（曾提交过一个与源码脱节的 v1 构建），需要时 `cd aluco-sim && mvn -q package` 产出 `target/aluco-sim-1.0.0.jar`
-- `.github/workflows/ci.yml`：server 构建+测试、web 构建、simulator 构建；`compose-smoke` 在 push/schedule/dispatch 下起全栈，断言摄取速率与命令 SENT→ACKED
+- `.github/workflows/ci.yml`：server 构建+测试、web 构建、simulator 构建；`compose-smoke`（push 到 master / 每周 schedule / dispatch，PR 不跑）起的就是 README 里那条一键命令，断言 `result="ok"` 有量且 `result="dropped"` 为 0，再断言命令 SENT→ACKED；失败时自动 dump `docker compose ps` 与 server/sim 日志
 - Grafana：provisioning 预置 datasource + `aluco-overview.json` 面板
 
 ---
