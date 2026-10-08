@@ -3,8 +3,6 @@ target/
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
-!**/node_modules/
-!**/dist/
 ### STS ###
 .apt_generated
 .classpath
@@ -39,3 +37,8 @@ null
 ### local env & runtime noise — never commit ###
 .env
 *.log
+
+### build output: the web image runs `npm run build` itself (aluco-web/Dockerfile) ###
+aluco-web/dist/
+### committed simulator binary drifts from source (it was a v1 jar); build it instead ###
+deploy/scripts/*.jar

@@ -307,7 +307,8 @@ All sensitive values are configurable via env vars; defaults target localhost.
 ### Simulator CLI
 
 ```bash
-java -jar aluco-sim-1.0.0.jar [options]
+# Build first (the jar is not committed): cd aluco-sim && mvn -q package
+java -jar aluco-sim/target/aluco-sim-1.0.0.jar [options]
 
 # Common options
 --devices 1000                 # 1000 simulated devices
@@ -478,3 +479,7 @@ Connect at `ws://localhost:8080/ws/live?token=<JWT>`
 ## License
 
 Apache-2.0 — see [LICENSE](LICENSE).
+
+```
+Copyright 2026 nbz (github.com/zlzpic)
+```

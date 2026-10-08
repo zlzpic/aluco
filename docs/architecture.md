@@ -263,10 +263,10 @@ React 18 + TS + Vite + AntD + ECharts。结构：
 
 ## 8. 部署与 CI
 
-- `deploy/docker-compose.yml`：mysql、emqx（匿名已禁）、server、prometheus、grafana、sim（demo profile）、sim-insecure；`web` 待后补
+- `deploy/docker-compose.yml`：`name: aluco`；mysql、emqx（demo 默认匿名，`EMQX_ALLOW_ANONYMOUS=false` 切凭证模式）、server、web、prometheus、grafana，sim 在 `demo` profile 后
 - `nginx.conf`：静态托管 + `/api`、`/ws` 反代（WS Upgrade 头）
-- `deploy/scripts/`：benchmark 系列脚本（`.bat`/`.ps1`/`.sh`）+ 打包好的 `aluco-sim-1.0.0.jar`
-- `.github/workflows/ci.yml`：server 构建+测试（Testcontainers）、web 构建、simulator 构建
+- `deploy/scripts/`：benchmark 系列脚本（`.bat`/`.ps1`/`.sh`）。模拟器 jar **不再入库**（曾提交过一个与源码脱节的 v1 构建），需要时 `cd aluco-sim && mvn -q package` 产出 `target/aluco-sim-1.0.0.jar`
+- `.github/workflows/ci.yml`：server 构建+测试、web 构建、simulator 构建；`compose-smoke` 在 push/schedule/dispatch 下起全栈，断言摄取速率与命令 SENT→ACKED
 - Grafana：provisioning 预置 datasource + `aluco-overview.json` 面板
 
 ---
