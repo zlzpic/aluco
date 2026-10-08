@@ -56,6 +56,13 @@ services:
       ALUCO_JWT_SECRET: aluco-compose-demo-secret-change-me-0123456789abcdef
     ports:
       - "8080:8080"
+    healthcheck:
+      # "container started" is not "REST is serving"; sim and CI both wait on this.
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/actuator/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 20s
     depends_on:
       mysql:
         condition: service_healthy
@@ -114,7 +121,8 @@ services:
       --username admin
       --password admin123
     depends_on:
-      - server
+      server:
+        condition: service_healthy
 
 volumes:
   mysql-data:

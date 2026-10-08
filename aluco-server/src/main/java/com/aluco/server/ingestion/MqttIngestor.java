@@ -195,6 +195,12 @@ public class MqttIngestor implements TelemetryIngestor, CommandPublisher, MqttCa
      */
     @Override
     public String publishSetInterval(String deviceKey, int intervalSec) {
+        // 0. Fail fast with 404 — otherwise we would persist a command row for a device that
+        // can never receive it, and the publish failure below would surface as a 500.
+        deviceRepository.findByDeviceKey(deviceKey)
+                .orElseThrow(() -> com.aluco.server.common.BizException.notFound(
+                        "DEVICE_NOT_FOUND", "no such device: " + deviceKey));
+
         // 1. Persist
         com.aluco.server.command.Command cmd = commandService.createSetInterval(deviceKey, intervalSec);
 

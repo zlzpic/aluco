@@ -129,7 +129,8 @@ Every choice below is deliberate — including what it costs us. Details live in
 ```bash
 cd deploy
 docker compose --profile demo up -d --build   # MySQL, EMQX, server, web, Prometheus, Grafana + 200 simulated devices
-# API is reachable ~20s after the containers start (measured, warm images); then open http://localhost
+# `up -d` returns once the server passes its healthcheck (the simulator is gated on that,
+# so device registration can't race a cold API), then open http://localhost
 ```
 
 > First run pulls ~1.5 GB of base images and builds the three modules (Maven/npm run inside

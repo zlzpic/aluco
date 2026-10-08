@@ -24,6 +24,9 @@ import java.util.concurrent.atomic.AtomicLong;
         description = "Aluco device fleet simulator")
 public class AlucoSim implements Runnable {
 
+    static final int SEED_ATTEMPTS = 12;
+    static final long SEED_RETRY_MS = 5_000;
+
     @Option(names = "--broker", defaultValue = "tcp://localhost:1883",
             description = "EMQX address (default: ${DEFAULT-VALUE})")
     String broker;
@@ -91,11 +94,32 @@ public class AlucoSim implements Runnable {
         String[] metricNames = metrics.split(",");
 
         if (seedDevices) {
-            try {
-                new DeviceSeeder(api).seed(username, password, site, devicePrefix, devices);
-            } catch (Exception e) {
-                System.err.println("[seeder] failed: " + e.getMessage()
-                        + " (continuing anyway; unregistered devices will be dropped by server)");
+            // Compose starts sim the moment the server container exists, not the moment it can
+            // serve REST, so the first login usually lands on a connection refusal. Retry rather
+            // than giving up: with no registered devices the server drops every reading we send.
+            DeviceSeeder seeder = new DeviceSeeder(api);
+            for (int attempt = 1; ; attempt++) {
+                try {
+                    seeder.seed(username, password, site, devicePrefix, devices);
+                    break;
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                } catch (Exception e) {
+                    if (attempt >= SEED_ATTEMPTS) {
+                        System.err.println("[seeder] failed after " + attempt + " attempts: " + e.getMessage()
+                                + " (continuing anyway; unregistered devices will be dropped by server)");
+                        break;
+                    }
+                    System.err.println("[seeder] attempt " + attempt + "/" + SEED_ATTEMPTS
+                            + " failed (" + e.getMessage() + "), retrying in " + (SEED_RETRY_MS / 1000) + "s");
+                    try {
+                        Thread.sleep(SEED_RETRY_MS);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
             }
         }
 
