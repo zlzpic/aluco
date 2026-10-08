@@ -3,6 +3,8 @@
 [![CI](https://github.com/zlzpic/aluco/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/zlzpic/aluco/actions/workflows/ci.yml)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 
+语言：**English** · [简体中文](README.zh-CN.md)
+
 > **Aluco** (Ural Owl) — open-source IoT device fleet monitoring platform.
 > Devices report telemetry over MQTT; the platform ingests, stores, thresholds, and visualizes in real time.
 
@@ -48,10 +50,10 @@ graph LR
     SIM[aluco-sim<br/>200 devices] -->|MQTT telemetry| EMQX[(EMQX broker)]
     EMQX -->|subscribe| ING[Ingestion<br/>MqttIngestor]
     ING --> PROC[TelemetryProcessor<br/>validate + count]
-    PROC --> SINK{TelemetrySink<br/>memory | kafka}
+    PROC --> SINK{"TelemetrySink<br/>memory | kafka"}
     SINK --> FAN[consumer fan-out]
-    FAN --> COLD[TimeSeriesStore<br/>mysql | timescale]
-    FAN --> HOT[StateStore<br/>mysql | redis]
+    FAN --> COLD["TimeSeriesStore<br/>mysql | timescale"]
+    FAN --> HOT["StateStore<br/>mysql | redis"]
     HOT --> PUSH[LivePush<br/>WebSocket]
     FAN --> ALERT[AlertingEngine<br/>threshold rules]
     ALERT --> PUSH
@@ -229,7 +231,7 @@ After `docker compose --profile demo up -d --build`, verify:
 - [ ] **200 devices** appear in device list (simulator auto-seeded)
 - [ ] **Real-time chart** scrolls on device detail page (WebSocket `telemetry` frames)
 - [ ] **Rule `temp GT 30`** fires FIRING alerts within 90s of spike injection, and the
-      matching **恢复 / RESOLVED** toast follows — alert recovery is pushed, not just polled
+      matching **RESOLVED** toast follows — alert recovery is pushed, not just polled
 - [ ] **Alert ACK** changes status to ACKED in the alert list
 - [ ] **Set interval** command reaches the device and is acknowledged:
       `POST /api/v1/devices/{key}/commands/set-interval` then
