@@ -35,3 +35,7 @@ build/
 
 ### Windows build noise: `chcp 65001 > null` (should be `>nul`) drops this file in the module dir ###
 null
+
+### local env & runtime noise — never commit ###
+.env
+*.log

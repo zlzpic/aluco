@@ -1,4 +1,7 @@
-version: '3.8'
+# Explicit project name: without it Compose derives "deploy" from this directory,
+# which collides with unrelated stacks of the same name and makes --remove-orphans
+# dangerous. All resources this file owns are prefixed "aluco_" as a result.
+name: aluco
 
 services:
 
@@ -6,14 +9,14 @@ services:
     image: mysql:8.4
     container_name: aluco-mysql
     environment:
-      MYSQL_ROOT_PASSWORD: root
+      MYSQL_ROOT_PASSWORD: ${ALUCO_DB_PASSWORD:-root}
       MYSQL_DATABASE: aluco
     volumes:
       - mysql-data:/var/lib/mysql
     ports:
-      - "3306:3306"
+      - "127.0.0.1:3307:3306"   # host-side debugging only; containers use mysql:3306
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -p\"$$MYSQL_ROOT_PASSWORD\""]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -22,9 +25,9 @@ services:
     image: emqx/emqx:5.8.6
     container_name: aluco-emqx
     environment:
-      # v2 spec 5.2.2: EMQX built-in auth, disable anonymous
-      EMQX_ALLOW_ANONYMOUS: "false"
-      # EMQX API credentials (v2 spec 5.2.3: server bootstraps EMQX via REST API)
+      # v1 demo runs on anonymous MQTT (server ingestor & simulator connect without credentials).
+      # Set EMQX_ALLOW_ANONYMOUS=false only if your devices provide deviceKey/token credentials.
+      EMQX_ALLOW_ANONYMOUS: "${EMQX_ALLOW_ANONYMOUS:-true}"
       EMQX_DASHBOARD__DEFAULT_USERNAME: admin
       EMQX_DASHBOARD__DEFAULT_PASSWORD: ${EMQX_DASHBOARD_PASSWORD:-public}
     ports:
@@ -38,16 +41,15 @@ services:
 
   server:
     build:
-      context: ../server
+      context: ../aluco-server
     container_name: aluco-server
     environment:
-      ALUCO_DB_URL: jdbc:mysql://mysql:3306/aluco?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+      ALUCO_DB_URL: jdbc:mysql://mysql:3306/aluco?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true
       ALUCO_DB_USER: root
-      ALUCO_DB_PASSWORD: root
+      ALUCO_DB_PASSWORD: ${ALUCO_DB_PASSWORD:-root}
       ALUCO_MQTT_BROKER: tcp://emqx:1883
-      # v2 spec 5.2.2: enable MQTT auth (use device.token as password)
-      ALUCO_MQTT_AUTH: ${ALUCO_MQTT_AUTH:-on}
-      # EMQX API credentials for device credential sync (v2 spec 5.2.3)
+      # EMQX REST API credentials for device credential sync (v2 spec 5.2.3)
+      ALUCO_EMQX_API_BASE: http://emqx:18083
       ALUCO_EMQX_API_USER: admin
       ALUCO_EMQX_API_PASSWORD: ${EMQX_DASHBOARD_PASSWORD:-public}
       # DEMO ONLY — override in any real deployment (README warning).
@@ -59,9 +61,17 @@ services:
         condition: service_healthy
       emqx:
         condition: service_healthy
-    profiles:
-      - core
-      - demo
+
+  web:
+    build:
+      context: ../aluco-web
+    container_name: aluco-web
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "80:80"
+    depends_on:
+      - server
 
   prometheus:
     image: prom/prometheus:v2.55.1
@@ -72,9 +82,6 @@ services:
       - "9090:9090"
     depends_on:
       - server
-    profiles:
-      - core
-      - demo
 
   grafana:
     image: grafana/grafana:11.3.1
@@ -89,13 +96,11 @@ services:
       - "3000:3000"
     depends_on:
       - prometheus
-    profiles:
-      - core
-      - demo
 
+  # ---- simulator (demo profile): seeds 200 devices via REST, then streams telemetry ----
   sim:
     build:
-      context: ../simulator
+      context: ../aluco-sim
     container_name: aluco-sim
     profiles: ["demo"]
     command: >
@@ -105,42 +110,11 @@ services:
       --interval 1s
       --ramp 30s
       --spike-probability 0.002
-      --auth
       --api http://server:8080/api/v1
       --username admin
       --password admin123
     depends_on:
       - server
-
-  # ---- sim-insecure (v1 anonymous mode, for v1-only demo) ----
-  sim-insecure:
-    build:
-      context: ../simulator
-    container_name: aluco-sim-insecure
-    profiles: ["demo"]
-    command: >
-      --broker tcp://emqx:1883
-      --site site-01
-      --devices 50
-      --interval 1s
-      --ramp 10s
-      --spike-probability 0.005
-      --auth=false
-      --api http://server:8080/api/v1
-      --username admin
-      --password admin123
-    depends_on:
-      - server
-
-  # ---- web frontend (pending; uncomment once web/ is built) ----
-  # web:
-  #   build:
-  #     context: ../web
-  #   container_name: aluco-web
-  #   ports:
-  #     - "80:80"
-  #   depends_on:
-  #     - server
 
 volumes:
   mysql-data:

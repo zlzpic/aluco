@@ -13,7 +13,7 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
 
     List<AlertEvent> findByStatus(AlertEvent.Status status);
 
-    /** Spring Data derived query — used by findFiringEvent (no custom JPQL needed). */
+    /** Spring Data derived query — used by resolve() to find the open event (no custom JPQL needed). */
     List<AlertEvent> findByRuleIdAndStatus(Long ruleId, AlertEvent.Status status);
 
     long countByStatus(AlertEvent.Status status);

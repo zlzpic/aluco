@@ -9,6 +9,5 @@ RUN mvn -q package -DskipTests
 # ---- runtime stage ----
 FROM eclipse-temurin:21-jre
 WORKDIR /app
-COPY --from=build /build/target/aluco-server-1.0.0.jar app.jar
-EXPOSE 8080
+COPY --from=build /build/target/aluco-sim-1.0.0.jar app.jar
 ENTRYPOINT ["java", "-jar", "app.jar"]

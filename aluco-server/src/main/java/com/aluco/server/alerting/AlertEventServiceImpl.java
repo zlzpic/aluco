@@ -49,20 +49,24 @@ public class AlertEventServiceImpl implements AlertEventService {
 
     @Override
     @Transactional
-    public void resolve(AlertRule rule, String deviceKey, long ts) {
-        deviceRepository.findByDeviceKey(deviceKey).ifPresent(device -> {
-            List<AlertEvent> firing = eventRepository.findByRuleIdAndStatus(
-                    rule.getId(), AlertEvent.Status.FIRING);
-            Instant at = Instant.ofEpochMilli(ts);
-            firing.stream()
-                    .filter(e -> e.getDeviceId().equals(device.getId()))
-                    .forEach(e -> {
-                        e.resolve(at);
-                        e.setRuleName(rule.getName());
-                        e.setDeviceKey(deviceKey);
-                        eventRepository.save(e);
-                    });
-        });
+    public AlertEvent resolve(AlertRule rule, String deviceKey, long ts) {
+        Device device = deviceRepository.findByDeviceKey(deviceKey).orElse(null);
+        if (device == null) {
+            return null;
+        }
+        Instant at = Instant.ofEpochMilli(ts);
+        AlertEvent resolved = null;
+        for (AlertEvent e : eventRepository.findByRuleIdAndStatus(rule.getId(), AlertEvent.Status.FIRING)) {
+            if (!e.getDeviceId().equals(device.getId())) {
+                continue;
+            }
+            e.resolve(at);
+            // snapshot columns so the WS frame renders without a device join (spec 4.4.1)
+            e.setRuleName(rule.getName());
+            e.setDeviceKey(deviceKey);
+            resolved = eventRepository.save(e);
+        }
+        return resolved;
     }
 
     @Override
@@ -118,26 +122,4 @@ public class AlertEventServiceImpl implements AlertEventService {
     public AlertEvent getById(long id) {
         return eventRepository.findById(id).orElse(null);
     }
-
-    /** Find FIRING event for (ruleId, deviceKey) pair - used by RESOLVED push (spec 4.2 #2). */
-    @Transactional
-    public AlertEvent findFiringEvent(Long ruleId, String deviceKey) {
-        // Find by ruleId, filter by deviceKey (device_id lookup)
-        List<AlertEvent> events = eventRepository.findByRuleIdAndStatus(
-                ruleId, AlertEvent.Status.FIRING);
-        for (AlertEvent e : events) {
-            String dk = deviceRepository.findById(e.getDeviceId())
-                    .map(Device::getDeviceKey).orElse(null);
-            if (deviceKey.equals(dk)) {
-                e.setRuleName(null);  // Will be filled by caller
-                e.setDeviceKey(deviceKey);
-                return e;
-            }
-        }
-        return null;
-    }
-
-   /* public Function<Long, String> unusedGuard() {
-        throw new UnsupportedOperationException();
-    }*/
 }

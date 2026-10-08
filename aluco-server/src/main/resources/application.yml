@@ -5,9 +5,12 @@ spring:
   application:
     name: aluco-server
   datasource:
-    url: "jdbc:mysql://localhost:3306/aluco?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true"
-    username: "root"
-    password: "123456"
+    # rewriteBatchedStatements is required, not a micro-optimisation: without it
+    # Connector/J sends JdbcTemplate batches one statement per row (executeBatchSerially),
+    # so a 1,000-point telemetry batch costs 1,000 round trips and the sink starves.
+    url: ${ALUCO_DB_URL:jdbc:mysql://localhost:3306/aluco?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true}
+    username: ${ALUCO_DB_USER:root}
+    password: ${ALUCO_DB_PASSWORD:123456}
   jpa:
     open-in-view: false
     hibernate:
@@ -32,6 +35,7 @@ aluco:
     broker: tcp://localhost:1883
     client-id: aluco-server
     telemetry-topic: aluco/+/+/telemetry
+    cmdack-topic: aluco/+/+/cmdack
     reconnect-interval-ms: 5000
   sink:
     capacity: 200000

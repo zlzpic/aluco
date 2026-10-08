@@ -71,9 +71,9 @@ aluco/
 
 | 类 | 存在的意义 |
 |---|---|
-| `MqttIngestor` (TelemetryIngestor) | 应用就绪后连 EMQX，订阅 `aluco/+/+/telemetry`；断线 5s 自动重连；每条消息调 `TelemetryProcessor.onRawMessage` |
+| `MqttIngestor` (TelemetryIngestor + CommandPublisher) | 应用就绪后连 EMQX，订阅 `aluco/+/+/telemetry` 与 `aluco/+/+/cmdack`；断线 5s 自动重连；按 topic 后缀分流——遥测走 `TelemetryProcessor.onRawMessage`，回执走 `CommandAckProcessor` |
 | `CommandPublisher` 接口 | 接缝外的一处抽象：`publish(deviceKey, cmd)`、`publishSetInterval(...)` |
-| `CommandPublisherImpl` / `NoOpCommandPublisher` | 真实发布到 `.../cmd` 主题 / 无 broker 开发环境兜底 |
+| `NoOpCommandPublisher` | `aluco.mqtt.enabled=false`（无 broker 的开发环境）时的兜底实现 |
 
 ### 1.3 `processing` — 实时管线（三接缝所在地）
 
@@ -122,7 +122,7 @@ aluco/
 |---|---|
 | `Command` / `CommandRepository` | command 表：cmd_id UNIQUE、status ∈ SENT/ACKED/FAILED/TIMEOUT、acked_at |
 | `CommandService` | 建命令(SENT)→发布；收到 ack→置 ACKED/FAILED；查询单条/按设备分页 |
-| `CommandAckProcessor` | 订阅 `aluco/+/+/cmdack`，校验 cmd_id 必须存在且状态为 SENT，否则丢弃计数 |
+| `CommandAckProcessor` | 处理 `aluco/+/+/cmdack`（由 `MqttIngestor` 订阅并分流）：ACKED→`ack()`、FAILED→`fail()`，仅当命令仍是 SENT 才流转；随后 `LivePush.pushCommandEvent` 广播 |
 | `CommandTimeoutTask` | `@Scheduled(fixedDelay=10s)`：SENT 超过 30s 置 TIMEOUT |
 | `LivePush.pushCommandEvent` | 状态流转经 WS `command` 帧广播 |
 
@@ -156,9 +156,9 @@ Controller：`AuthController`（login）、`DeviceController`、`RuleController`
 
 ---
 
-## 2. 数据库（Flyway：V1 + V2）
+## 2. 数据库（Flyway：V1 + V2 + V3）
 
-`aluco-server/src/main/resources/db/migration/`，MySQL 8.4，Testcontainers 验证（H2 已弃用）。
+`aluco-server/src/main/resources/db/migration/`，MySQL 8.4（生产/演示）+ H2 `MODE=MySQL`（测试）；脚本必须双方言兼容（无 `AFTER`、无多动作 `ALTER`、无 `UPDATE...JOIN`、索引名按 schema 命名、种子用 `INSERT...SELECT...WHERE NOT EXISTS`）。
 
 | 表 | 关键点 |
 |---|---|
@@ -168,7 +168,7 @@ Controller：`AuthController`（login）、`DeviceController`、`RuleController`
 | `telemetry` | 窄表一指标一行；`idx_dev_metric_ts(device_id, metric, ts)` + **V2 加 `UNIQUE uk_dev_metric_ts`**（Kafka at-least-once 幂等写入的基石） |
 | `alert_rule` / `alert_event` | 规则与事件；V2 给 event 加 `device_key`、`rule_name` 快照列（告警展示永不 join device） |
 | `command`（V2 新增） | cmd_id UNIQUE、status、acked_at |
-| `app_user`（V2 由 `user` 改名） | 根除保留字问题 |
+| `app_user`（V2 由 `user` 改名） | 根除保留字问题；V3 幂等种子 demo 账号 `admin`（仅演示用，见 README） |
 
 **孤儿语义三支柱（ADR-0008，已决策不可变）**：① tombstone 保设备 key 解析路径（`device ∪ device_tombstone`）；② alert_event 快照列；③ telemetry 不建外键。为何不用 FK / 弃软删除 → 见 ADR-0008。
 

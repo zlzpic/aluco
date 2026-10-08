@@ -50,6 +50,59 @@ public class MySqlStateStore implements StateStore {
                 metricsJson, state.online() ? 1 : 0, lastSeen, state.deviceKey());
     }
 
+    /** Rows per statement in upsertAll; keeps a single multi-row statement parseable. */
+    private static final int UPSERT_CHUNK = 500;
+
+    @Override
+    public void upsertAll(Collection<DeviceState> states) {
+        if (states == null || states.isEmpty()) {
+            return;
+        }
+        List<DeviceState> batch = new ArrayList<>(states);
+        Map<String, Long> ids = resolveDeviceIds(batch);
+        for (int from = 0; from < batch.size(); from += UPSERT_CHUNK) {
+            List<DeviceState> chunk = batch.subList(from, Math.min(from + UPSERT_CHUNK, batch.size()));
+            StringBuilder sql = new StringBuilder(
+                    "INSERT INTO device_state (device_id, metrics, online, last_seen_at) VALUES ");
+            List<Object> args = new ArrayList<>(chunk.size() * 4);
+            for (DeviceState state : chunk) {
+                Long deviceId = ids.get(state.deviceKey());
+                if (deviceId == null) {
+                    continue; // device removed mid-flight; nothing to persist
+                }
+                sql.append(args.isEmpty() ? "(?,?,?,?)" : ",(?,?,?,?)");
+                args.add(deviceId);
+                args.add(toJson(state.metrics()));
+                args.add(state.online() ? 1 : 0);
+                args.add(state.lastSeenAt() == null ? null : new Timestamp(state.lastSeenAt()));
+            }
+            if (args.isEmpty()) {
+                continue;
+            }
+            sql.append(" ON DUPLICATE KEY UPDATE metrics = VALUES(metrics), ")
+                    .append("online = VALUES(online), last_seen_at = VALUES(last_seen_at)");
+            jdbc.update(sql.toString(), args.toArray());
+        }
+    }
+
+    /** One SELECT for every deviceKey not already cached (ids are immutable per key). */
+    private Map<String, Long> resolveDeviceIds(List<DeviceState> states) {
+        Set<String> missing = new java.util.HashSet<>();
+        for (DeviceState state : states) {
+            if (!deviceIds.containsKey(state.deviceKey())) {
+                missing.add(state.deviceKey());
+            }
+        }
+        if (!missing.isEmpty()) {
+            String placeholders = missing.stream().map(k -> "?").collect(Collectors.joining(","));
+            jdbc.query("SELECT id, device_key FROM device WHERE device_key IN (" + placeholders + ")",
+                    (org.springframework.jdbc.core.RowCallbackHandler) rs ->
+                            deviceIds.put(rs.getString("device_key"), rs.getLong("id")),
+                    missing.toArray());
+        }
+        return deviceIds;
+    }
+
     @Override
     public Optional<DeviceState> get(String deviceKey) {
         List<DeviceState> r = jdbc.query(

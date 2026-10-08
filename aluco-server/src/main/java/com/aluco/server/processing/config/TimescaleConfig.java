@@ -48,7 +48,7 @@ public class TimescaleConfig {
     @Bean
     @Qualifier("timescaleDataSource")
     public DataSource timescaleDataSource(
-            @Value("${aluco.timescale.jdbc-url:jdbc:postgresql://localhost:5432/aluco}") String url,
+            @Value("${aluco.timescale.jdbc-url:jdbc:postgresql://localhost:5432/aluco?reWriteBatchedInserts=true}") String url,
             @Value("${aluco.timescale.username:postgres}") String username,
             @Value("${aluco.timescale.password:}") String password) {
         return DataSourceBuilder.create()

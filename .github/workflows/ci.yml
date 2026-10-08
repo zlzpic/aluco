@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ master ]
   pull_request:
-    branches: [ main ]
+    branches: [ master ]
   workflow_dispatch:   # manual trigger
 
 jobs:
@@ -84,13 +84,13 @@ jobs:
 
       - name: Assert ingestion
         run: |
-          METRICS=$(curl -sf http://localhost:8080/actuator/prometheus)
-          echo "$METRICS" | grep -E '^aluco_ingest_received' | awk '{print $2}' > /tmp/ingest.txt
-          VAL=$(cat /tmp/ingest.txt)
-          if [ "$VAL" = "NaN" ] || [ -z "$VAL" ] || [ "$VAL" = "0.0" ]; then
-            echo "No telemetry received" && exit 1
+          curl -sf http://localhost:8080/actuator/prometheus -o /tmp/metrics.txt
+          # micrometer counter aluco.ingest.received -> aluco_ingest_received_total{result="..."} <value>
+          VAL=$(awk '/^aluco_ingest_received_total/ {s += $NF} END {print s+0}' /tmp/metrics.txt)
+          echo "aluco_ingest_received_total sum = $VAL"
+          if [ "$(echo "$VAL > 0" | bc)" -ne 1 ]; then
+            echo "No telemetry ingested" && exit 1
           fi
-          echo "Ingestion OK: aluco.ingest.received = $VAL"
 
       - name: Teardown
         if: always()

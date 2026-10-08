@@ -1,6 +1,7 @@
 package com.aluco.server.command;
 
 import com.aluco.server.common.DeviceCommand;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -31,7 +32,13 @@ public class CommandService {
     @Transactional
     public Command createSetInterval(String deviceKey, int intervalSec) {
         String cmdId = UUID.randomUUID().toString();
-        String params = Map.of("intervalSec", intervalSec).toString();
+        // command.params is a MySQL JSON column: Map.toString() ("{intervalSec=5}") is rejected.
+        String params;
+        try {
+            params = objectMapper.writeValueAsString(Map.of("intervalSec", intervalSec));
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("command params serialization failed", e);
+        }
         Command cmd = new Command(cmdId, deviceKey, DeviceCommand.TYPE_SET_INTERVAL, params);
         return commandRepository.save(cmd);
     }

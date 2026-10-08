@@ -16,9 +16,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import java.util.concurrent.TimeUnit;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
 
 
 /**
@@ -26,7 +28,7 @@ import java.util.concurrent.ArrayBlockingQueue;
  * drop-and-count on overflow) + a single consumer thread fanning out to
  * three paths:
  *   cold  - buffered batch insert via TimeSeriesStore (1,000 pts or 500ms)
- *   hot   - upsert device_state + LivePush.pushTelemetry
+ *   hot   - device_state upserts buffered per window (one commit) + LivePush.pushTelemetry
  *   alert - AlertingEngine per data point
  * Also records end-to-end latency (now - envelope.ts) and presence(true)
  * transitions for devices coming back online.
@@ -49,6 +51,14 @@ public class InMemoryTelemetrySink implements TelemetrySink {
     private final PresenceTracker presenceTracker;
     private final int batchMaxSize;
     private final long flushIntervalMs;
+
+    /**
+     * Write-behind mirror of device_state.metrics, owned by the consumer thread.
+     * The merge-override semantics need the previous metrics; reading them back per
+     * envelope was half of the hot-path round trips. Same lifetime (and same bounded
+     * size, one entry per fleet key) as MySqlStateStore's id cache.
+     */
+    private final Map<String, Map<String, Double>> latestMetrics = new ConcurrentHashMap<>();
 
     private volatile boolean running = true;
     private final Thread consumer;
@@ -86,17 +96,18 @@ public class InMemoryTelemetrySink implements TelemetrySink {
 
     private void consumeLoop() {
         List<TelemetryPoint> buffer = new ArrayList<>(batchMaxSize);
+        Map<String, DeviceState> pendingStates = new HashMap<>();
         long lastFlush = System.currentTimeMillis();
         while (running || !queue.isEmpty()) {
             try {
                 TelemetryMessage msg = queue.poll(100, TimeUnit.MILLISECONDS);
                 if (msg != null) {
-                    dispatch(msg, buffer);
+                    dispatch(msg, buffer, pendingStates);
                 }
                 long now = System.currentTimeMillis();
                 if (!buffer.isEmpty()
                         && (buffer.size() >= batchMaxSize || now - lastFlush >= flushIntervalMs)) {
-                    flush(buffer);
+                    flush(buffer, pendingStates);
                     lastFlush = now;
                 }
             } catch (InterruptedException e) {
@@ -107,11 +118,15 @@ public class InMemoryTelemetrySink implements TelemetrySink {
             }
         }
         if (!buffer.isEmpty()) {
-            flush(buffer);
+            flush(buffer, pendingStates);
+        }
+        if (!pendingStates.isEmpty()) {
+            stateStore.upsertAll(pendingStates.values());
         }
     }
 
-    private void dispatch(TelemetryMessage msg, List<TelemetryPoint> buffer) {
+    private void dispatch(TelemetryMessage msg, List<TelemetryPoint> buffer,
+                          Map<String, DeviceState> pendingStates) {
         String deviceKey = msg.deviceKey();
 
         // cold path: flatten envelope into points
@@ -119,12 +134,12 @@ public class InMemoryTelemetrySink implements TelemetrySink {
             buffer.add(new TelemetryPoint(deviceKey, e.getKey(), msg.ts(), e.getValue()));
         }
 
-        // hot path: merge-override latest metrics, stamp envelope ts, mark online
-        Map<String, Double> merged = stateStore.get(deviceKey)
-                .map(s -> new java.util.HashMap<>(s.metrics()))
-                .orElseGet(java.util.HashMap::new);
+        // hot path: merge-override latest metrics, stamp envelope ts, mark online.
+        // Buffered here, committed once per flush window by upsertAll.
+        Map<String, Double> merged = latestMetrics.computeIfAbsent(deviceKey, k ->
+                stateStore.get(k).map(s -> new HashMap<>(s.metrics())).orElseGet(HashMap::new));
         merged.putAll(msg.metrics());
-        stateStore.upsert(new DeviceState(deviceKey, merged, true, msg.ts()));
+        pendingStates.put(deviceKey, new DeviceState(deviceKey, Map.copyOf(merged), true, msg.ts()));
         livePush.pushTelemetry(deviceKey, msg.ts(), msg.metrics());
 
         // presence: report coming back online
@@ -137,13 +152,22 @@ public class InMemoryTelemetrySink implements TelemetrySink {
         e2eLatency.record(System.currentTimeMillis() - msg.ts(), TimeUnit.MILLISECONDS);
     }
 
-    private void flush(List<TelemetryPoint> buffer) {
+    private void flush(List<TelemetryPoint> buffer, Map<String, DeviceState> pendingStates) {
         try {
             timeSeriesStore.writeBatch(List.copyOf(buffer));
         } catch (Exception e) {
             log.error("telemetry batch write failed, {} points lost", buffer.size(), e);
         }
         buffer.clear();
+
+        try {
+            if (!pendingStates.isEmpty()) {
+                stateStore.upsertAll(pendingStates.values());
+            }
+        } catch (Exception e) {
+            log.error("device_state batch write failed, {} states lost", pendingStates.size(), e);
+        }
+        pendingStates.clear();
     }
 
     /** Called by OfflineDetectionTask so a later report triggers presence(true). */

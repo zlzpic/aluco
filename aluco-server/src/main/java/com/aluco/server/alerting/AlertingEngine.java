@@ -85,14 +85,9 @@ public class AlertingEngine {
                     }
                     case RESOLVED -> {
                         // spec 4.2 #2: RESOLVED frame must carry a persisted event (real id, resolvedAt)
-                        eventService.resolve(rule, msg.deviceKey(), msg.ts());
-                        // Resolve logic persists; pushAlert reads the already-persisted event from DB
-                        AlertEvent resolved = eventService.findFiringEvent(rule.getId(), msg.deviceKey());
+                        AlertEvent resolved = eventService.resolve(rule, msg.deviceKey(), msg.ts());
                         if (resolved != null) {
                             livePush.pushAlert(resolved);
-                        } else {
-                            log.warn("RESOLVED frame could not fetch event for rule {} / device {}",
-                                    rule.getId(), msg.deviceKey());
                         }
                     }
                     case NONE -> { /* dedup or quiet: nothing to do */ }

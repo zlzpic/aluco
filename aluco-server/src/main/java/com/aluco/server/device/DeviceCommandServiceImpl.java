@@ -1,11 +1,9 @@
 package com.aluco.server.device;
 
 import com.aluco.server.command.Command;
-import com.aluco.server.command.CommandRepository;
 import com.aluco.server.command.CommandService;
 import com.aluco.server.ingestion.CommandPublisher;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
@@ -18,20 +16,19 @@ public class DeviceCommandServiceImpl implements DeviceCommandService {
 
     private final CommandService commandService;
     private final CommandPublisher commandPublisher;
-    private final CommandRepository commandRepository;
 
     public DeviceCommandServiceImpl(CommandService commandService,
-                                    CommandPublisher commandPublisher,
-                                    CommandRepository commandRepository) {
+                                    CommandPublisher commandPublisher) {
         this.commandService = commandService;
         this.commandPublisher = commandPublisher;
-        this.commandRepository = commandRepository;
     }
 
     /**
      * Send SET_INTERVAL command to a device (spec 5.1.4, REST #14 revised).
+     * No @Transactional: the command row must be committed before the MQTT publish,
+     * otherwise a fast cmdack arrives while the row is still invisible and the ack
+     * is rejected as "unknown cmdId" (leaving the command stuck in SENT).
      */
-    @Transactional
     public String setReportInterval(String deviceKey, int intervalSec) {
         return commandPublisher.publishSetInterval(deviceKey, intervalSec);
     }

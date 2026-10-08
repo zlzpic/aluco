@@ -3,8 +3,6 @@ package com.aluco.server.command;
 import com.aluco.server.common.EnvelopeCodec;
 import com.aluco.server.common.CmdackMessage;
 import com.aluco.server.push.LivePush;
-import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken;
-import org.eclipse.paho.client.mqttv3.MqttCallback;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,14 +11,15 @@ import org.springframework.stereotype.Component;
 import java.nio.charset.StandardCharsets;
 
 /**
- * Subscribes to aluco/+/+/cmdack and processes device command acknowledgments.
- * v2 spec 5.1.2.
+ * Processes device command acknowledgments from aluco/+/+/cmdack, routed here by
+ * MqttIngestor (the single MQTT endpoint). v2 spec 5.1.2.
  */
 @Component
-public class CommandAckProcessor implements MqttCallback {
+public class CommandAckProcessor {
 
     private static final Logger log = LoggerFactory.getLogger(CommandAckProcessor.class);
 
+    private final EnvelopeCodec codec = new EnvelopeCodec();
     private final CommandService commandService;
     private final LivePush livePush;
 
@@ -29,16 +28,10 @@ public class CommandAckProcessor implements MqttCallback {
         this.livePush = livePush;
     }
 
-    @Override
-    public void connectionLost(Throwable cause) {
-        log.warn("cmdack connection lost: {}", cause.getMessage());
-    }
-
-    @Override
-    public void messageArrived(String topic, MqttMessage message) throws Exception {
+    public void handle(String topic, MqttMessage message) {
         try {
             String payload = new String(message.getPayload(), StandardCharsets.UTF_8);
-            EnvelopeCodec.CmdackParseResult result = new EnvelopeCodec().parseCmdack(topic, payload);
+            EnvelopeCodec.CmdackParseResult result = codec.parseCmdack(topic, payload);
 
             if (!result.ok()) {
                 log.debug("cmdack dropped: {}", result.dropReason());
@@ -46,7 +39,7 @@ public class CommandAckProcessor implements MqttCallback {
             }
 
             CmdackMessage cmdack = result.message();
-            log.debug("cmdack received: cmdId={}, status={}", cmdack.cmdId(), cmdack.status());
+            log.info("cmdack received: cmdId={}, status={}", cmdack.cmdId(), cmdack.status());
 
             // Update command status
             if ("ACKED".equalsIgnoreCase(cmdack.status())) {
@@ -61,10 +54,5 @@ public class CommandAckProcessor implements MqttCallback {
         } catch (Exception e) {
             log.error("cmdack processing error", e);
         }
-    }
-
-    @Override
-    public void deliveryComplete(IMqttDeliveryToken token) {
-        // no-op
     }
 }

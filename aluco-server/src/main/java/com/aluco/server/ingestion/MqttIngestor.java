@@ -1,6 +1,7 @@
 package com.aluco.server.ingestion;
 
 import com.aluco.server.common.DeviceCommand;
+import com.aluco.server.command.CommandAckProcessor;
 import com.aluco.server.command.CommandService;
 import com.aluco.server.device.DeviceRepository;
 import com.aluco.server.processing.TelemetryProcessor;
@@ -18,16 +19,16 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
 /**
  * Paho-based MQTT endpoint (spec 7.3.1):
- *  - connects after application readiness, subscribes aluco/+/+/telemetry (QoS 1)
+ *  - connects after application readiness, subscribes aluco/+/+/telemetry and
+ *    aluco/+/+/cmdack (QoS 1)
  *  - auto-reconnects every aluco.mqtt.reconnect-interval-ms (default 5s)
- *  - every inbound message goes to TelemetryProcessor.onRawMessage
+ *  - telemetry goes to TelemetryProcessor.onRawMessage, cmdack to CommandAckProcessor
  *  - also serves as CommandPublisher for downlink commands (QoS 1)
  *
  * v1 runs against an anonymous EMQX (spec 7.4.1); device tokens are not
@@ -42,10 +43,12 @@ public class MqttIngestor implements TelemetryIngestor, CommandPublisher, MqttCa
     private final String broker;
     private final String clientId;
     private final String telemetryTopic;
+    private final String cmdackTopic;
     private final long reconnectIntervalMs;
     private final TelemetryProcessor processor;
     private final DeviceRepository deviceRepository;
     private final CommandService commandService;
+    private final CommandAckProcessor commandAckProcessor;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private volatile MqttClient client;
@@ -55,17 +58,21 @@ public class MqttIngestor implements TelemetryIngestor, CommandPublisher, MqttCa
     public MqttIngestor(@Value("${aluco.mqtt.broker}") String broker,
                         @Value("${aluco.mqtt.client-id}") String clientId,
                         @Value("${aluco.mqtt.telemetry-topic}") String telemetryTopic,
+                        @Value("${aluco.mqtt.cmdack-topic:aluco/+/+/cmdack}") String cmdackTopic,
                         @Value("${aluco.mqtt.reconnect-interval-ms:5000}") long reconnectIntervalMs,
                         TelemetryProcessor processor,
                         DeviceRepository deviceRepository,
-                        CommandService commandService) {
+                        CommandService commandService,
+                        CommandAckProcessor commandAckProcessor) {
         this.broker = broker;
         this.clientId = clientId;
         this.telemetryTopic = telemetryTopic;
+        this.cmdackTopic = cmdackTopic;
         this.reconnectIntervalMs = reconnectIntervalMs;
         this.processor = processor;
         this.deviceRepository = deviceRepository;
         this.commandService = commandService;
+        this.commandAckProcessor = commandAckProcessor;
     }
 
     @PostConstruct
@@ -123,6 +130,12 @@ public class MqttIngestor implements TelemetryIngestor, CommandPublisher, MqttCa
         } catch (Exception e) {
             log.error("subscribe to {} failed", telemetryTopic, e);
         }
+        try {
+            client.subscribe(cmdackTopic, 1);
+            log.info("subscribed to {} (QoS 1)", cmdackTopic);
+        } catch (Exception e) {
+            log.error("subscribe to {} failed", cmdackTopic, e);
+        }
     }
 
     @Override
@@ -138,6 +151,10 @@ public class MqttIngestor implements TelemetryIngestor, CommandPublisher, MqttCa
     @Override
     public void messageArrived(String topic, MqttMessage message) {
         try {
+            if (topic.endsWith("/cmdack")) {
+                commandAckProcessor.handle(topic, message);
+                return;
+            }
             processor.onRawMessage(topic, message.getPayload());
         } catch (Exception e) {
             log.error("error processing inbound message on {}", topic, e);
@@ -172,9 +189,11 @@ public class MqttIngestor implements TelemetryIngestor, CommandPublisher, MqttCa
 
     /**
      * Create and publish a SET_INTERVAL command (spec 5.1.4 flow).
+     * Deliberately not @Transactional: createSetInterval must COMMIT before the
+     * publish, otherwise a fast device can send its cmdack while the command row
+     * is still invisible, and the ack is lost as "unknown cmdId".
      */
     @Override
-    @Transactional
     public String publishSetInterval(String deviceKey, int intervalSec) {
         // 1. Persist
         com.aluco.server.command.Command cmd = commandService.createSetInterval(deviceKey, intervalSec);
